@@ -107,7 +107,7 @@ function formatEvent(ev, tickerState, gameSummary) {
         case "Goal":
         case "SevenMeterGoal": {
             let scoreLine;
-            const [pointsHome, pointsGuest] = ev.score.split('-')
+            const [pointsHome, pointsGuest] = ev.score.split(':')
             // Create score line, bolding the score of the team that scored
             if (ev.team === 'Home') {
                 scoreLine = `${homeTeamName}  *${pointsHome}*:${pointsGuest}  ${guestTeamName}`;
@@ -123,7 +123,7 @@ function formatEvent(ev, tickerState, gameSummary) {
         case "Disqualification":
         case "DisqualificationWithReport":
         case "Timeout": 
-            return `${eventInfo.emoji} ${ev.message} (${time})`;
+            return `${eventInfo.emoji} ${ev.message} ${time}`;
 
         case "StartPeriod": 
             if (ev.time === "00:00") {
@@ -133,7 +133,7 @@ function formatEvent(ev, tickerState, gameSummary) {
             }       
 
         case "StopPeriod": {
-            const [homeScore, awayScore] = ev.score.split('-');
+            const [homeScore, awayScore] = ev.score.split(':');
             const minute = parseInt(ev.time.split(':')[0], 10);
 
             // If the minute is greater than 30 (e.g., "60:00"), it's the end of the game.
@@ -147,7 +147,7 @@ function formatEvent(ev, tickerState, gameSummary) {
 
         // Fallback for any other unknown or unhandled event types
         default:
-            return `${eventInfo.emoji} ${ev.message || eventInfo.label} (${time})`;
+            return `${eventInfo.emoji} ${ev.message || eventInfo.label} ${time}`;
     }
 }
 

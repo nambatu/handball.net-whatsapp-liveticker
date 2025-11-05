@@ -10,7 +10,7 @@ let activeTickers, jobQueue, client, seenFilePath, scheduleFilePath;
 // --- WORKER POOL CONFIG ---
 let lastPolledIndex = -1; 
 let activeWorkers = 0; 
-const MAX_WORKERS = 5; 
+const MAX_WORKERS = 5; // Using our faster settings
 const PRE_GAME_START_MINUTES = 5; 
 const RECAP_INTERVAL_MINUTES = 5; 
 
@@ -25,32 +25,48 @@ function initializePolling(tickers, queue, whatsappClient, seenFile, scheduleFil
     scheduleFilePath = scheduleFile;
 }
 
-// --- NEW HELPER FUNCTION (v4 - The Robust One!) ---
+// --- NEW HELPER FUNCTION (v5 - The Universal One!) ---
 
 /**
- * Extracts the Game ID from any valid handball.net URL by finding the
- * path segment that matches the game ID format (e.g., "handball4all...").
+ * Extracts the Game ID from any valid handball.net URL.
+ * It finds the last path segment, ignores it if it's a "view" (like 'ticker' or 'info'),
+ * and returns the segment before it.
  * @param {string} meetingPageUrl - The user-provided URL.
- * @returns {string|null} - The extracted game ID or null.
+ * @returns {string|null} - The extracted game ID (e.g., "nuliga.hvberlin.8062487") or null.
  */
 function getGameIdFromUrl(meetingPageUrl) {
     try {
         const url = new URL(meetingPageUrl);
-        const pathname = url.pathname;
+        let pathname = url.pathname;
+
+        // Remove trailing slash if it exists
+        if (pathname.endsWith('/')) {
+            pathname = pathname.slice(0, -1);
+        }
 
         // Split the path into segments, filtering out empty ones
         const segments = pathname.split('/').filter(segment => segment.length > 0);
         
-        // Find the first segment that matches our known ID patterns
-        // We search in reverse, as the ID is usually near the end.
-        for (let i = segments.length - 1; i >= 0; i--) {
-            const segment = segments[i];
-            if (segment.startsWith('handball4all.') || segment.startsWith('sportradar.')) {
-                return segment; // Found it!
-            }
+        // Get the last segment
+        let potentialId = segments[segments.length - 1];
+
+        // Define a list of "view" segments to ignore at the end
+        // (We can add more to this list if we find them)
+        const viewSegments = ['ticker', 'info', 'liveticker', 'statistik', 'tabelle', 'aufstellung', 'halle'];
+
+        // If the last segment is a "view", look at the one before it
+        if (viewSegments.includes(potentialId.toLowerCase())) {
+            segments.pop(); // Remove the "view" segment
+            potentialId = segments[segments.length - 1]; // Get the segment before it
         }
-        
-        // If no match is found after checking all segments
+
+        // Now, check if this segment looks like an ID.
+        // Our simple, universal check: does it contain a dot?
+        if (potentialId && potentialId.includes('.')) {
+            return potentialId;
+        }
+
+        // If no valid ID was found
         return null; 
 
     } catch (e) {
@@ -308,6 +324,7 @@ async function runWorker(job) {
             const startDateLocale = startTime.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             tickerState.teamNames = teamNames;
+            // tickerState.lastUpdatedAt = gameSummary.updatedAt; // <-- REMOVED! This is the fix from before.
             tickerState.meetingPageUrl = meetingPageUrl; // Save the original user-facing URL
 
             if (delay > 0) { // Still in future
@@ -342,7 +359,7 @@ async function runWorker(job) {
              }
              
              const newUpdatedAt = gameSummary.updatedAt;
-             if (newUpdatedAt && newUpdatedAt !== tickerState.lastUpdatedAt) {
+             if (!tickerState.lastUpdatedAt || newUpdatedAt > tickerState.lastUpdatedAt) { // <-- Updated check
                 console.log(`[${chatId}] Neue Version erkannt: ${newUpdatedAt}`);
                 tickerState.lastUpdatedAt = newUpdatedAt;
                 

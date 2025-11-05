@@ -1,8 +1,8 @@
 // ai.js 
-const { GoogleGenAI } = require("@google/genai"); // Use GoogleGenAI
+const { GoogleGenAI } = require("@google/genai");
 
 // The client gets the API key from the environment variable `GEMINI_API_KEY`.
-const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY); // Use GoogleGenerAI
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 /**
  * NEW: Helper function to find the top scorer(s) from a lineup array.
@@ -34,29 +34,44 @@ function findTopScorer(lineup) {
  * @returns {object} - An object with stats (topScorers, penalties, sevenMeters).
  */
 function getStatsForPrompt(lineupData, teamNames) {
+    // --- UPDATED to include blueCards ---
     const stats = {
-        home: { name: teamNames.home, penalties: 0, sevenMetersMade: 0, sevenMetersMissed: 0 },
-        guest: { name: teamNames.guest, penalties: 0, sevenMetersMade: 0, sevenMetersMissed: 0 }
+        home: { name: teamNames.home, penalties: 0, sevenMetersMade: 0, sevenMetersMissed: 0, yellowCards: 0, redCards: 0, blueCards: 0 },
+        guest: { name: teamNames.guest, penalties: 0, sevenMetersMade: 0, sevenMetersMissed: 0, yellowCards: 0, redCards: 0, blueCards: 0 }
     };
 
+    // --- UPDATED to track blueCards separately ---
     lineupData.home.forEach(p => {
-        stats.home.penalties += p.penalties;
-        stats.home.sevenMetersMade += p.penaltyGoals;
-        stats.home.sevenMetersMissed += p.penaltyMissed;
+        stats.home.penalties += p.penalties; 
+        stats.home.sevenMetersMade += p.penaltyGoals; 
+        stats.home.sevenMetersMissed += p.penaltyMissed; 
+        stats.home.yellowCards += p.yellowCards;
+        stats.home.redCards += p.redCards;
+        stats.home.blueCards += p.blueCards || 0; // Add blue cards
     });
     lineupData.away.forEach(p => {
-        stats.guest.penalties += p.penalties;
-        stats.guest.sevenMetersMade += p.penaltyGoals;
-        stats.guest.sevenMetersMissed += p.penaltyMissed;
+        stats.guest.penalties += p.penalties; 
+        stats.guest.sevenMetersMade += p.penaltyGoals; 
+        stats.guest.sevenMetersMissed += p.penaltyMissed; 
+        stats.guest.yellowCards += p.yellowCards;
+        stats.guest.redCards += p.redCards;
+        stats.guest.blueCards += p.blueCards || 0; // Add blue cards
     });
 
+    // --- UPDATED to return new card stats ---
     return {
         homeTopScorer: findTopScorer(lineupData.home),
         guestTopScorer: findTopScorer(lineupData.away),
         homePenalties: stats.home.penalties,
         guestPenalties: stats.guest.penalties,
         homeSevenMeters: `${stats.home.sevenMetersMade} von ${stats.home.sevenMetersMade + stats.home.sevenMetersMissed}`,
-        guestSevenMeters: `${stats.guest.sevenMetersMade} von ${stats.guest.sevenMetersMade + stats.guest.sevenMetersMissed}`
+        guestSevenMeters: `${stats.guest.sevenMetersMade} von ${stats.guest.sevenMetersMade + stats.guest.sevenMetersMissed}`,
+        homeYellowCards: stats.home.yellowCards,
+        guestYellowCards: stats.guest.yellowCards,
+        homeRedCards: stats.home.redCards,
+        guestRedCards: stats.guest.redCards,
+        homeBlueCards: stats.home.blueCards,
+        guestBlueCards: stats.guest.blueCards
     };
 }
 
@@ -74,18 +89,27 @@ async function extractGameStats(lineupData, teamNames) {
         return "";
     }
 
-    // Use the new helper function to get stats
     const gameStats = getStatsForPrompt(lineupData, teamNames);
 
-    // Format the stats into a string message
-    const statsMessage = `📊 *Statistiken zum Spiel:*\n` +
+    // --- UPDATED to include new blue card stats ---
+    let statsMessage = `📊 *Statistiken zum Spiel:*\n` +
                          `-----------------------------------\n` +
-                         `Topscorer (${teamNames.home}):* ${gameStats.homeTopScorer}\n` +
-                         `Topscorer (${teamNames.guest}):* ${gameStats.guestTopScorer}\n` +
-                         `7-Meter (${teamNames.home}):* ${gameStats.homeSevenMeters}\n` +
-                         `7-Meter (${teamNames.guest}):* ${gameStats.guestSevenMeters}\n` +
-                         `Zeitstrafen (${teamNames.home}):* ${gameStats.homePenalties}\n` +
-                         `Zeitstrafen (${teamNames.guest}):* ${gameStats.guestPenalties}`;
+                         `*Topscorer (${teamNames.home}):* ${gameStats.homeTopScorer}\n` +
+                         `*Topscorer (${teamNames.guest}):* ${gameStats.guestTopScorer}\n` +
+                         `*7-Meter (${teamNames.home}):* ${gameStats.homeSevenMeters}\n` +
+                         `*7-Meter (${teamNames.guest}):* ${gameStats.guestSevenMeters}\n` +
+                         `*Zeitstrafen (${teamNames.home}):* ${gameStats.homePenalties}\n` +
+                         `*Zeitstrafen (${teamNames.guest}):* ${gameStats.guestPenalties}\n` +
+                         `*Gelbe Karten (${teamNames.home}):* ${gameStats.homeYellowCards}\n` +
+                         `*Gelbe Karten (${teamNames.guest}):* ${gameStats.guestYellowCards}\n` +
+                         `*Rote Karten (${teamNames.home}):* ${gameStats.homeRedCards}\n` +
+                         `*Rote Karten (${teamNames.guest}):* ${gameStats.guestRedCards}`;
+    
+    // Only add blue cards if there were any
+    if (gameStats.homeBlueCards > 0 || gameStats.guestBlueCards > 0) {
+        statsMessage += `\n*Blaue Karten (${teamNames.home}):* ${gameStats.homeBlueCards}\n` +
+                        `*Blaue Karten (${teamNames.guest}):* ${gameStats.guestBlueCards}`;
+    }
     
     return statsMessage;
 }
@@ -93,13 +117,9 @@ async function extractGameStats(lineupData, teamNames) {
 
 /**
  * REWRITTEN: Generates the AI game summary.
- * No longer needs `halftimeLength`.
- * Now requires `lineupData` to be passed from polling.js.
  * @param {Array} events - The chronological (reversed) list of events.
  * @param {object} teamNames - The team names object.
- * @param {string} groupName - The name of the WhatsApp group.
- * @param {object} lineupData - The `gameData.lineup` object.
- * @returns {string} - The formatted AI summary message.
+ *... (rest of prompt and function)
  */
 async function generateGameSummary(events, teamNames, groupName, lineupData) {
     if (!process.env.GEMINI_API_KEY) {
@@ -107,7 +127,6 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
         return "";
     }
 
-    // Find final and halftime scores from the event list
     const finalEvent = events.find(e => e.type === "StopPeriod" && parseInt(e.time.split(':')[0], 10) > 30);
     const halftimeEvent = events.find(e => e.type === "StopPeriod" && parseInt(e.time.split(':')[0], 10) <= 30);
 
@@ -115,11 +134,10 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
     const halftimeScore = halftimeEvent ? halftimeEvent.score.replace('-', ':') : "N/A";
     const gameDurationMinutes = finalEvent ? parseInt(finalEvent.time.split(':')[0], 10) : 60;
 
-    // Score-Progression based on 10-minute intervals
     let scoreProgression = "Start: 0:0";
     for (let minute = 10; minute <= gameDurationMinutes; minute += 10) {
-        // Find the last event *before or at* this minute
         const eventAtTime = [...events].reverse().find(e => {
+            if (!e.time) return false; 
             const evMinute = parseInt(e.time.split(':')[0], 10);
             return evMinute <= minute && e.score;
         });
@@ -129,15 +147,14 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
         }
     }
 
-    // 2. Detaillierte Statistiken extrahieren (using new helper)
     const gameStats = getStatsForPrompt(lineupData, teamNames);
 
-    // 3. & 4. Neuer, kreativer und parteiischer Prompt (halftimeLength entfernt)
+    // --- UPDATED to include new card stats in the prompt ---
     const prompt = `Du bist ein witziger, leicht sarkastischer und fachkundiger deutscher Handball-Kommentator.
     Deine Aufgabe ist es, eine kurze, unterhaltsame Zusammenfassung (ca. 2-4 Sätze) für ein gerade beendetes Spiel zu schreiben.
 
     WICHTIG: Die WhatsApp-Gruppe, in der du postest, heißt "${groupName}". Analysiere diesen Namen, um herauszufinden, welches Team du unterstützen sollst. 
-    Falls der Gruppenname NICHT EINDEUTIG einem Team zuzuordnen ist, sei neutral und ignoriere den Grußennamen. Falls sich die Gruppe aber DEFINITIV einem Team zuordnen lässt, unterstütze das Team mit Herzblut und roaste auch gerne das gegnerische Team.
+    Falls der Gruppenname NICHT EINDEUTIG einem Team zuzuordnen ist, sei neutral und ignoriere den Grußennamen. Falls sich die Gruppe aber DEFINITIV einem Team zuzuordnen lässt, unterstütze das Team mit Herzblut und roaste auch gerne das gegnerische Team.
     
     Hier sind die Spieldaten:
     - Heimmannschaft: ${teamNames.home}
@@ -148,15 +165,21 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
     - Spielverlauf (ausgewählte Spielstände): ${scoreProgression}, Ende: ${finalScore}
     - Topscorer ${teamNames.home}: ${gameStats.homeTopScorer}
     - Topscorer ${teamNames.guest}: ${gameStats.guestTopScorer}
-    - Zeitstrafen ${teamNames.home}: ${gameStats.homePenalties}
-    - Zeitstrafen ${teamNames.guest}: ${gameStats.guestPenalties}
     - 7-Meter ${teamNames.home}: ${gameStats.homeSevenMeters}
     - 7-Meter ${teamNames.guest}: ${gameStats.guestSevenMeters}
+    - Zeitstrafen ${teamNames.home}: ${gameStats.homePenalties}
+    - Zeitstrafen ${teamNames.guest}: ${gameStats.guestPenalties}
+    - Gelbe Karten ${teamNames.home}: ${gameStats.homeYellowCards}
+    - Gelbe Karten ${teamNames.guest}: ${gameStats.guestYellowCards}
+    - Rote Karten ${teamNames.home}: ${gameStats.homeRedCards}
+    - Rote Karten ${teamNames.guest}: ${gameStats.guestRedCards}
+    - Blaue Karten ${teamNames.home}: ${gameStats.homeBlueCards}
+    - Blaue Karten ${teamNames.guest}: ${gameStats.guestBlueCards}
 
     Anweisungen:
     1.  Gib deiner Zusammenfassung eine kreative, reißerische Überschrift in Fett (z.B. *Herzschlagfinale in der Halle West!* oder *Eine Lehrstunde in Sachen Abwehrschlacht.*).
     2.  Verwende die Statistiken für spitze Kommentare. (z.B. "Mit ${gameStats.guestPenalties} Zeitstrafen hat sich Team Gast das Leben selbst schwer gemacht." oder "Am Ende hat die Kaltschnäuzigkeit vom 7-Meter-Punkt den Unterschied gemacht."). Verwende die Statistiken nur, wenn sie auch sinnvoll oder wichtig für das Spiel waren.
-    3.  Sei kreativ, vermeide Standardfloskeln. Gib dem Kommentar Persönlichkeit! Vermeide Sachen aus den Daten zu interpretieren die nicht daraus zu erschließen sind, bleibe lieber bei den Fakten als eine "zu offensive Abwehr" zu erfinden. 
+    3.  Sei kreativ, vermeide Standardflosfloskeln. Gib dem Kommentar Persönlichkeit! Vermeide Sachen aus den Daten zu interpretieren die nicht daraus zu erschließen sind, bleibe lieber bei den Fakten als eine "zu offensive Abwehr" zu erfinden. 
     4.  Falls Julian Langschwert, Tiard Brinkmann und/oder Simon Goßmann gespielt hat, lobe ihn sarkastisch bis in den Himmel.
 
     Deine Zusammenfassung (nur Überschrift und Text, ohne "Zusammenfassung:"):`;
