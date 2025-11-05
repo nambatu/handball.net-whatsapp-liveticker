@@ -412,8 +412,7 @@ async function processEvents(gameData, tickerState, chatId) {
 
         let msg = "";
         if (tickerState.mode === 'live') {
-            msg = formatEvent(ev, tickerState, gameSummary);
-        }
+            msg = formatEvent(ev, tickerState, gameData);        }
 
         if (tickerState.mode === 'live' && msg) {
             try {

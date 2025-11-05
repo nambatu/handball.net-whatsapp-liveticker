@@ -91,27 +91,35 @@ async function extractGameStats(lineupData, teamNames) {
 
     const gameStats = getStatsForPrompt(lineupData, teamNames);
 
-    // --- UPDATED to include new blue card stats ---
+    // --- NEW CLEANED-UP FORMAT ---
     let statsMessage = `📊 *Statistiken zum Spiel:*\n` +
                          `-----------------------------------\n` +
-                         `*Topscorer (${teamNames.home}):* ${gameStats.homeTopScorer}\n` +
-                         `*Topscorer (${teamNames.guest}):* ${gameStats.guestTopScorer}\n` +
-                         `*7-Meter (${teamNames.home}):* ${gameStats.homeSevenMeters}\n` +
-                         `*7-Meter (${teamNames.guest}):* ${gameStats.guestSevenMeters}\n` +
-                         `*Zeitstrafen (${teamNames.home}):* ${gameStats.homePenalties}\n` +
-                         `*Zeitstrafen (${teamNames.guest}):* ${gameStats.guestPenalties}\n` +
-                         `*Gelbe Karten (${teamNames.home}):* ${gameStats.homeYellowCards}\n` +
-                         `*Gelbe Karten (${teamNames.guest}):* ${gameStats.guestYellowCards}\n` +
-                         `*Rote Karten (${teamNames.home}):* ${gameStats.homeRedCards}\n` +
-                         `*Rote Karten (${teamNames.guest}):* ${gameStats.guestRedCards}`;
+                         `*${teamNames.home}:*\n` +
+                         `  - Topscorer: ${gameStats.homeTopScorer}\n` +
+                         `  - 7-Meter: ${gameStats.homeSevenMeters}\n` +
+                         `  - Zeitstrafen: ${gameStats.homePenalties}\n` +
+                         `  - Gelbe Karten: ${gameStats.homeYellowCards}\n` +
+                         `  - Rote Karten: ${gameStats.homeRedCards}\n`;
+
+    // Only add blue cards if there were any
+    if (gameStats.homeBlueCards > 0) {
+        statsMessage += `  - Blaue Karten: ${gameStats.homeBlueCards}\n`;
+    }
+
+    statsMessage += `-----------------------------------\n` +
+                    `*${teamNames.guest}:*\n` +
+                    `  - Topscorer: ${gameStats.guestTopScorer}\n` +
+                    `  - 7-Meter: ${gameStats.guestSevenMeters}\n` +
+                    `  - Zeitstrafen: ${gameStats.guestPenalties}\n` +
+                    `  - Gelbe Karten: ${gameStats.guestYellowCards}\n` +
+                    `  - Rote Karten: ${gameStats.guestRedCards}\n`;
     
     // Only add blue cards if there were any
-    if (gameStats.homeBlueCards > 0 || gameStats.guestBlueCards > 0) {
-        statsMessage += `\n*Blaue Karten (${teamNames.home}):* ${gameStats.homeBlueCards}\n` +
-                        `*Blaue Karten (${teamNames.guest}):* ${gameStats.guestBlueCards}`;
+    if (gameStats.guestBlueCards > 0) {
+        statsMessage += `  - Blaue Karten: ${gameStats.guestBlueCards}\n`;
     }
     
-    return statsMessage;
+    return statsMessage.trim(); // .trim() removes any potential trailing newline
 }
 
 
