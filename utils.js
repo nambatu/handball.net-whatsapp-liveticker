@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { EVENT_MAP } = require('./config.js'); // Import event definitions
 
-// --- DATA PERSISTENCE (UNCHANGED) ---
+// --- DATA PERSISTENCE ---
 
 function loadSeenTickers(activeTickers, seenFilePath) {
     try {
@@ -121,9 +121,9 @@ function formatEvent(ev, tickerState, gameData) {
             const [pointsHome, pointsGuest] = ev.score.replace('-', ':').split(':');
             
             if (ev.team === 'Home') {
-                scoreLine = `${homeTeamName}  *${pointsHome}*:${pointsGuest}  ${guestTeamName}`;
+                scoreLine = `${homeTeamName} *${pointsHome}*:${pointsGuest} ${guestTeamName}`;
             } else {
-                scoreLine = `${homeTeamName}  ${pointsHome}:*${pointsGuest}* ${guestTeamName}`;
+                scoreLine = `${homeTeamName} ${pointsHome}:*${pointsGuest}* ${guestTeamName}`;
             }
             
             // Use the special formatting for goals: "Tor durch F. Lastname (Time)"
@@ -164,9 +164,9 @@ function formatEvent(ev, tickerState, gameData) {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
 
             if (minute > 30) {
-                 return `🏁 *Spielende*\n${homeTeamName}  *${homeScore}:${awayScore}* ${guestTeamName}`;
+                 return `🏁 *Spielende*\n${homeTeamName} *${homeScore}:${awayScore}* ${guestTeamName}`;
             } else {
-                 return `⏸️ *Halbzeit*\n${homeTeamName}  *${homeScore}:${awayScore}* ${guestTeamName}`;
+                 return `⏸️ *Halbzeit*\n${homeTeamName} *${homeScore}:${awayScore}* ${guestTeamName}`;
             }
         }
 

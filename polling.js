@@ -10,7 +10,7 @@ let activeTickers, jobQueue, client, seenFilePath, scheduleFilePath;
 // --- WORKER POOL CONFIG ---
 let lastPolledIndex = -1; 
 let activeWorkers = 0; 
-const MAX_WORKERS = 5; // Using our faster settings
+const MAX_WORKERS = 5; 
 const PRE_GAME_START_MINUTES = 5; 
 const RECAP_INTERVAL_MINUTES = 5; 
 
@@ -25,14 +25,24 @@ function initializePolling(tickers, queue, whatsappClient, seenFile, scheduleFil
     scheduleFilePath = scheduleFile;
 }
 
-// --- NEW HELPER FUNCTION (v5 - The Universal One!) ---
+// --- HELPER FUNCTION ---
+
+/**
+ * Checks if a string segment looks like a valid Game ID.
+ * (e.g., "nuliga.hvberlin.8062487" -> true, "ticker" -> false)
+ * @param {string} segment - The URL path segment.
+ * @returns {boolean} - True if it looks like an ID.
+ */
+function looksLikeGameId(segment) {
+    if (!segment) return false;
+    // A Game ID must contain both a dot and a number.
+    return segment.includes('.') && /\d/.test(segment);
+}
 
 /**
  * Extracts the Game ID from any valid handball.net URL.
- * It finds the last path segment, ignores it if it's a "view" (like 'ticker' or 'info'),
- * and returns the segment before it.
  * @param {string} meetingPageUrl - The user-provided URL.
- * @returns {string|null} - The extracted game ID (e.g., "nuliga.hvberlin.8062487") or null.
+ * @returns {string|null} - The extracted game ID or null.
  */
 function getGameIdFromUrl(meetingPageUrl) {
     try {
@@ -48,25 +58,23 @@ function getGameIdFromUrl(meetingPageUrl) {
         const segments = pathname.split('/').filter(segment => segment.length > 0);
         
         // Get the last segment
+        let lastSegment = segments[segments.length - 1];
+
+        // Check if the last segment is the ID
+        if (looksLikeGameId(lastSegment)) {
+            return lastSegment; // Found it!
+        }
+
+        // If not, assume it's a "view" segment (like /ticker)
+        // and check the segment *before* it.
+        segments.pop(); // Remove the "view" segment
         let potentialId = segments[segments.length - 1];
-
-        // Define a list of "view" segments to ignore at the end
-        // (We can add more to this list if we find them)
-        const viewSegments = ['ticker', 'info', 'liveticker', 'statistik', 'tabelle', 'aufstellung', 'halle'];
-
-        // If the last segment is a "view", look at the one before it
-        if (viewSegments.includes(potentialId.toLowerCase())) {
-            segments.pop(); // Remove the "view" segment
-            potentialId = segments[segments.length - 1]; // Get the segment before it
+        
+        if (looksLikeGameId(potentialId)) {
+            return potentialId; // Found it!
         }
 
-        // Now, check if this segment looks like an ID.
-        // Our simple, universal check: does it contain a dot?
-        if (potentialId && potentialId.includes('.')) {
-            return potentialId;
-        }
-
-        // If no valid ID was found
+        // If we still haven't found it, the URL is invalid
         return null; 
 
     } catch (e) {
@@ -84,7 +92,7 @@ function buildDataUrl(gameId) {
     return `https://www.handball.net/a/sportdata/1/games/${gameId}/combined?`;
 }
 
-// --- END NEW HELPER FUNCTION ---
+// --- END HELPER FUNCTION ---
 
 
 /**
@@ -131,7 +139,6 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode) {
 
 /**
  * Activates the actual polling loop for a ticker.
- * (This function is unchanged)
  * @param {string} chatId - The WhatsApp chat ID.
  */
 async function beginActualPolling(chatId) {
@@ -198,7 +205,6 @@ async function beginActualPolling(chatId) {
 
 /**
  * Sends a recap message.
- * (This function is unchanged)
  * @param {string} chatId - The WhatsApp chat ID.
  */
 async function sendRecapMessage(chatId) {
@@ -241,7 +247,6 @@ async function sendRecapMessage(chatId) {
 
 /**
  * Master Scheduler: Runs periodically.
- * (Uses gameId)
  */
 function masterScheduler() {
     const pollingTickers = Array.from(activeTickers.values()).filter(t => t.isPolling);
@@ -265,7 +270,6 @@ function masterScheduler() {
 
 /**
  * Dispatcher Loop: Runs frequently.
- * (This function is unchanged)
  */
 function dispatcherLoop() {
     if (jobQueue.length > 0 && activeWorkers < MAX_WORKERS) {
@@ -277,7 +281,6 @@ function dispatcherLoop() {
 
 /**
  * Executes a single job (either 'schedule' or 'poll') using Axios.
- * (Uses gameId)
  * @param {object} job - The job object from the queue.
  */
 async function runWorker(job) {
@@ -297,7 +300,7 @@ async function runWorker(job) {
 
     try {
         // 1. Get the game ID. 
-        const effectiveGameId = gameId; // This is now correct for both job types
+        const effectiveGameId = gameId;
         if (!effectiveGameId) {
             throw new Error("Game ID konnte nicht ermittelt werden.");
         }
@@ -324,7 +327,6 @@ async function runWorker(job) {
             const startDateLocale = startTime.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             tickerState.teamNames = teamNames;
-            // tickerState.lastUpdatedAt = gameSummary.updatedAt; // <-- REMOVED! This is the fix from before.
             tickerState.meetingPageUrl = meetingPageUrl; // Save the original user-facing URL
 
             if (delay > 0) { // Still in future
@@ -359,7 +361,7 @@ async function runWorker(job) {
              }
              
              const newUpdatedAt = gameSummary.updatedAt;
-             if (!tickerState.lastUpdatedAt || newUpdatedAt > tickerState.lastUpdatedAt) { // <-- Updated check
+             if (!tickerState.lastUpdatedAt || newUpdatedAt > tickerState.lastUpdatedAt) { 
                 console.log(`[${chatId}] Neue Version erkannt: ${newUpdatedAt}`);
                 tickerState.lastUpdatedAt = newUpdatedAt;
                 
@@ -389,7 +391,6 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * (This function is unchanged)
  * @param {object} gameData - The full data object from the API (contains .summary, .events, .lineup).
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -399,7 +400,6 @@ async function processEvents(gameData, tickerState, chatId) {
     if (!gameData || !Array.isArray(gameData.events)) return false;
     
     let newUnseenEventsProcessed = false;
-    const gameSummary = gameData.summary; 
     
     // API sends events newest-first, so we reverse them
     const events = gameData.events.slice().reverse();
@@ -412,7 +412,8 @@ async function processEvents(gameData, tickerState, chatId) {
 
         let msg = "";
         if (tickerState.mode === 'live') {
-            msg = formatEvent(ev, tickerState, gameData);        }
+            msg = formatEvent(ev, tickerState, gameData); // Pass full gameData
+        }
 
         if (tickerState.mode === 'live' && msg) {
             try {
@@ -492,5 +493,5 @@ module.exports = {
     dispatcherLoop,
     startPolling: queueTickerScheduling,
     beginActualPolling,
-    getGameIdFromUrl // We need to export this for app.js
+    getGameIdFromUrl 
 };
