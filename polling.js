@@ -10,7 +10,7 @@ let activeTickers, jobQueue, client, seenFilePath, scheduleFilePath;
 // --- WORKER POOL CONFIG ---
 let lastPolledIndex = -1; 
 let activeWorkers = 0; 
-const MAX_WORKERS = 2; 
+const MAX_WORKERS = 5; 
 const PRE_GAME_START_MINUTES = 5; 
 const RECAP_INTERVAL_MINUTES = 5; 
 
@@ -308,7 +308,6 @@ async function runWorker(job) {
             const startDateLocale = startTime.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             tickerState.teamNames = teamNames;
-            tickerState.lastUpdatedAt = gameSummary.updatedAt; 
             tickerState.meetingPageUrl = meetingPageUrl; // Save the original user-facing URL
 
             if (delay > 0) { // Still in future

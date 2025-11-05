@@ -184,7 +184,7 @@ client.on('message', async msg => {
 });
 
 // --- MAIN EXECUTION ---
-setInterval(masterScheduler, 20000); 
+setInterval(masterScheduler, 5000); 
 setInterval(dispatcherLoop, 500); 
 client.initialize();
 
