@@ -1,1 +1,1 @@
-# handball.net-whatsapp-liveticker
+# handball.net-whatsapp-liveticker-bot
