@@ -76,7 +76,6 @@ function abbreviatePlayerName(firstName, lastName) {
 
 /**
  * Formats a game event object into a user-friendly WhatsApp message string for live mode.
- * (REWRITTEN to build messages manually)
  * @param {object} ev - The event object from the API.
  * @param {object} tickerState - The state object for the current ticker (contains team names).
  * @param {object} gameData - The full data object from the API (for lineup lookups).
@@ -87,68 +86,52 @@ function formatEvent(ev, tickerState, gameData) {
     const homeTeamName = tickerState.teamNames ? tickerState.teamNames.home : 'Heim';
     const guestTeamName = tickerState.teamNames ? tickerState.teamNames.guest : 'Gast';
     
-    const timeStr = ev.time ? ` (${ev.time})` : ''; // This is the correct time
+    const timeStr = ev.time ? ` (${ev.time})` : ''; 
     const lineup = gameData ? gameData.lineup : null;
     const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
+    const teamName = ev.team === 'Home' ? homeTeamName : guestTeamName;
 
-    // Helper to find player and build new message
-    const getFormattedPlayerMessage = () => {
-        // Regex to find the player number like (15.)
+    // --- NEW EMOJI LOGIC ---
+    const ageGroup = gameData?.summary?.ageGroup; // Get "Men" or "Women"
+    let emoji = eventInfo.emoji; // Get the default emoji from config
+
+    // Override the emoji for "Goal" based on gender
+    if (ev.type === "Goal") {
+        emoji = (ageGroup === "Men") ? "🤾‍♂️" : "🤾‍♀️";
+    }
+    // --- END NEW EMOJI LOGIC ---
+
+    // Helper function to get player name
+    const getPlayerName = () => {
         const numMatch = ev.message.match(/\((\d+)\.\)/);
         const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
-
-        let player = null;
         if (playerNumber && team && lineup && lineup[team]) {
-            player = lineup[team].find(p => p.number === playerNumber);
-        }
-
-        if (player) {
-            const abbreviatedName = abbreviatePlayerName(player.firstname, player.lastname);
-            
-            // Check if name is at the start or end of the original message
-            // "Tor durch Ana Walk (15.) (TV Schriesheim)"
-            if (ev.message.startsWith(eventInfo.label) || ev.message.startsWith("7-Meter")) {
-                 return `${eventInfo.label} durch ${abbreviatedName.trim()}`;
-            } 
-            // "Lukas Friedhoff (6.) (MTV Braunschweig) erhält eine 2-Minuten Strafe"
-            else {
-                 // Rebuild based on event type
-                 switch (ev.type) {
-                     case "TwoMinutePenalty":
-                         return `${abbreviatedName.trim()} erhält eine Zeitstrafe`;
-                     case "Warning":
-                         return `${abbreviatedName.trim()} erhält eine Verwarnung`;
-                     case "Disqualification":
-                         return `${abbreviatedName.trim()} erhält eine Rote Karte`;
-                     case "DisqualificationWithReport":
-                         return `${abbreviatedName.trim()} erhält eine Blaue Karte`;
-                     default:
-                         return `${eventInfo.label} durch ${abbreviatedName.trim()}`;
-                 }
+            const player = lineup[team].find(p => p.number === playerNumber);
+            if (player) {
+                return abbreviatePlayerName(player.firstname, player.lastname);
             }
-        } else {
-            // Fallback: Can't find player, just clean up the old message
-            let cleanedMessage = ev.message;
-            cleanedMessage = cleanedMessage.replace(/\s\([^)]*?\)$/, ''); // Remove team
-            cleanedMessage = cleanedMessage.replace(/\s\(\d+\.\)/, ''); // Remove number
-            return cleanedMessage;
         }
+        return null; // No player found
     };
-
 
     switch (ev.type) { 
         case "Goal":
         case "SevenMeterGoal": {
             let scoreLine;
-            const [pointsHome, pointsGuest] = ev.score.split(':');
+            const [pointsHome, pointsGuest] = ev.score.replace('-', ':').split(':');
+            
             if (ev.team === 'Home') {
                 scoreLine = `${homeTeamName}  *${pointsHome}*:${pointsGuest}  ${guestTeamName}`;
             } else {
                 scoreLine = `${homeTeamName}  ${pointsHome}:*${pointsGuest}* ${guestTeamName}`;
             }
             
-            const formattedMessage = getFormattedPlayerMessage();
-            return `${scoreLine}\n${eventInfo.emoji} ${formattedMessage}${timeStr}`;
+            // Use the special formatting for goals: "Tor durch F. Lastname (Time)"
+            const playerName = getPlayerName();
+            const msg = playerName ? `${eventInfo.label} durch ${playerName}` : eventInfo.label;
+            
+            // Use the new dynamic 'emoji' variable
+            return `${scoreLine}\n${emoji} ${msg}${timeStr}`;
         }
 
         case "SevenMeterMissed":
@@ -156,13 +139,18 @@ function formatEvent(ev, tickerState, gameData) {
         case "Warning":
         case "Disqualification":
         case "DisqualificationWithReport": {
-            const formattedMessage = getFormattedPlayerMessage();
-            return `${eventInfo.emoji} ${formattedMessage}${timeStr}`;
+            // "Label für F. Lastname (*Team*) (Time)"
+            const playerName = getPlayerName();
+            const target = playerName ? `${playerName} (*${teamName}*)` : `*${teamName}*`;
+            
+            // Use the new dynamic 'emoji' variable
+            return `${emoji} ${eventInfo.label} für ${target}${timeStr}`;
         }
 
         case "Timeout": 
-            // This message doesn't have a player name, so we just use it
-            return `${eventInfo.emoji} ${ev.message}${timeStr}`;
+            // "Label für *Team* (Time)"
+            // Use the new dynamic 'emoji' variable
+            return `${emoji} ${eventInfo.label} für *${teamName}*${timeStr}`;
 
         case "StartPeriod": 
             if (ev.time === "00:00") {
@@ -172,7 +160,7 @@ function formatEvent(ev, tickerState, gameData) {
             }       
 
         case "StopPeriod": {
-            const [homeScore, awayScore] = ev.score.split(':');
+            const [homeScore, awayScore] = ev.score.replace('-', ':').split(':');
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
 
             if (minute > 30) {
@@ -183,7 +171,9 @@ function formatEvent(ev, tickerState, gameData) {
         }
 
         default:
-            return `${eventInfo.emoji} ${ev.message || eventInfo.label}${timeStr}`;
+            // Fallback (e.g., if a new event type appears)
+            // Use the new dynamic 'emoji' variable
+            return `${emoji} ${ev.message || eventInfo.label}${timeStr}`;
     }
 }
 
