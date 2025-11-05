@@ -42,20 +42,20 @@ function getStatsForPrompt(lineupData, teamNames) {
 
     // --- UPDATED to track blueCards separately ---
     lineupData.home.forEach(p => {
-        stats.home.penalties += p.penalties; 
-        stats.home.sevenMetersMade += p.penaltyGoals; 
-        stats.home.sevenMetersMissed += p.penaltyMissed; 
-        stats.home.yellowCards += p.yellowCards;
-        stats.home.redCards += p.redCards;
-        stats.home.blueCards += p.blueCards || 0; // Add blue cards
+        stats.home.penalties += p.penalties || 0; 
+        stats.home.sevenMetersMade += p.penaltyGoals || 0; 
+        stats.home.sevenMetersMissed += p.penaltyMissed || 0; 
+        stats.home.yellowCards += p.yellowCards || 0;
+        stats.home.redCards += p.redCards || 0;
+        stats.home.blueCards += p.blueCards || 0;
     });
     lineupData.away.forEach(p => {
-        stats.guest.penalties += p.penalties; 
-        stats.guest.sevenMetersMade += p.penaltyGoals; 
-        stats.guest.sevenMetersMissed += p.penaltyMissed; 
-        stats.guest.yellowCards += p.yellowCards;
-        stats.guest.redCards += p.redCards;
-        stats.guest.blueCards += p.blueCards || 0; // Add blue cards
+        stats.guest.penalties += p.penalties || 0; 
+        stats.guest.sevenMetersMade += p.penaltyGoals || 0; 
+        stats.guest.sevenMetersMissed += p.penaltyMissed || 0; 
+        stats.guest.yellowCards += p.yellowCards || 0;
+        stats.guest.redCards += p.redCards || 0;
+        stats.guest.blueCards += p.blueCards || 0;
     });
 
     // --- UPDATED to return new card stats ---
