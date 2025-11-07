@@ -1,6 +1,5 @@
 // polling.js
 const axios = require('axios');
-// --- IMPORT abbreviatePlayerName ---
 const { saveSeenTickers, formatEvent, saveScheduledTickers, loadScheduledTickers, formatRecapEventLine, abbreviatePlayerName } = require('./utils.js');
 const { generateGameSummary, extractGameStats } = require('./ai.js');
 const { EVENT_MAP } = require('./config.js');
@@ -230,7 +229,6 @@ async function sendRecapMessage(chatId) {
     const endMinute = lastEventTime ? lastEventTime.split(':')[0] : '??';
     const timeRangeTitle = `Minute ${startMinute} - ${endMinute}`;
 
-    // --- Pass tickerState to formatRecapEventLine for ageGroup ---
     const recapLines = tickerState.recapEvents.map(ev => formatRecapEventLine(ev, tickerState));
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
@@ -331,7 +329,6 @@ async function runWorker(job) {
 
             tickerState.teamNames = teamNames;
             tickerState.meetingPageUrl = meetingPageUrl; 
-            // --- NEW: Store ageGroup for recap emoji ---
             tickerState.ageGroup = gameSummary.ageGroup; 
 
             if (delay > 0) { // Still in future
@@ -353,7 +350,7 @@ async function runWorker(job) {
                     mode: tickerState.mode,
                     isAutoSchedule: tickerState.isAutoSchedule,
                     teamPageUrl: tickerState.teamPageUrl,
-                    ageGroup: tickerState.ageGroup // --- NEW: Save ageGroup
+                    ageGroup: tickerState.ageGroup 
                 };
                 saveScheduledTickers(currentSchedule, scheduleFilePath);
                 tickerState.scheduleTimeout = setTimeout(() => beginActualPolling(chatId), delay);
@@ -374,7 +371,6 @@ async function runWorker(job) {
              if (!tickerState.teamNames) { 
                  tickerState.teamNames = { home: gameSummary.homeTeam.name, guest: gameSummary.awayTeam.name }; 
              }
-             // --- NEW: Store ageGroup if missing ---
              if (!tickerState.ageGroup) {
                  tickerState.ageGroup = gameSummary.ageGroup;
              }
@@ -410,7 +406,7 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * (MODIFIED to pre-format recap messages)
+ * (REWRITTEN to pre-format recap messages)
  * @param {object} gameData - The full data object from the API.
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -470,7 +466,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     case "SevenMeterGoal":
                         if (playerName) detailStr = `${eventInfo.label} durch ${playerName}`;
                         else if (playerNumber) detailStr = `${eventInfo.label} durch Nr. ${playerNumber}`;
-                        else detailStr = eventInfo.label;
+                        else detailStr = ev.message.replace(/\s\([^)]*?\)$/, ''); // Cleaned message
                         break;
                     case "SevenMeterMissed":
                     case "TwoMinutePenalty":
@@ -485,17 +481,20 @@ async function processEvents(gameData, tickerState, chatId) {
                         detailStr = `${eventInfo.label} für *${teamName}*`;
                         break;
                     case "StartPeriod":
+                        detailStr = (ev.time === "00:00") ? "Das Spiel hat begonnen!" : "Die zweite Halbzeit hat begonnen!";
+                        break;
                     case "StopPeriod":
                          const [homeScore, awayScore] = ev.score.replace('-', ':').split(':');
                          const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
-                         if (minute > 30) detailStr = `Spielende | *${homeScore}:${awayScore}*`;
-                         else detailStr = `Halbzeit | *${homeScore}:${awayScore}*`;
+                         if (minute > 30) detailStr = `Spielende`;
+                         else detailStr = `Halbzeit`;
                         break;
+                    default:
+                        detailStr = ev.message; // Fallback to original message
                 }
                 // --- End pre-formatting ---
                 
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
-                // Store the event *with* the pre-formatted string
                 tickerState.recapEvents.push({ ...ev, preformattedDetail: detailStr });
             }
         }
@@ -506,13 +505,9 @@ async function processEvents(gameData, tickerState, chatId) {
         if (isCriticalEvent && tickerState.mode === 'recap') {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
             
-            // 1. Clear the old 5-minute timer
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-            
-            // 2. Send the recap message
             await sendRecapMessage(chatId); 
             
-            // 3. Start a new 5-minute timer from this exact moment
             tickerState.recapIntervalId = setInterval(() => {
                 sendRecapMessage(chatId);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 

@@ -66,19 +66,13 @@ function saveScheduledTickers(scheduledTickers, scheduleFilePath) {
  * @returns {string|null} - The abbreviated name, or null if no usable name.
  */
 function abbreviatePlayerName(firstName, lastName) {
-    // Trim inputs to handle empty strings
     const fName = firstName ? firstName.trim() : null;
     const lName = lastName ? lastName.trim() : null;
 
-    // --- NEW: Handle "N.N." (Nomen Nescio) ---
-    // If BOTH first and last name are "N.N.", treat it as no name.
     if (fName === "N.N." && lName === "N.N.") {
         return null;
     }
-    // If only one is N.N., try to use the other name (e.g., if fName="N.N." but lName="Meyer")
-    // --- END NEW ---
-
-    // Handle normal names
+    
     if (lName && fName && fName !== "N.N.") {
         const firstInitial = fName.split(' ')[0].charAt(0);
         return `${firstInitial}. ${lName}`;
@@ -108,6 +102,7 @@ function formatEvent(ev, tickerState, gameData) {
 
     // --- NEW: Helper to get player name or number ---
     const getPlayerTarget = () => {
+        // Regex to find the player number like (15.) or (74.)
         const numMatch = ev.message.match(/\((\d+)\.\)/);
         const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
         let playerName = null;
@@ -120,20 +115,18 @@ function formatEvent(ev, tickerState, gameData) {
         }
         
         // Return the name, or the number, or null if neither is found
-        if (playerName) return { name: playerName, isPlayer: true };
-        if (playerNumber) return { name: `Nr. ${playerNumber}`, isPlayer: true };
-        return { name: `*${teamName}*`, isPlayer: false };
+        if (playerName) return { name: playerName, isPlayer: true }; // e.g., "G. Bolduan"
+        if (playerNumber) return { name: `Nr. ${playerNumber}`, isPlayer: true }; // e.g., "Nr. 68"
+        return { name: `*${teamName}*`, isPlayer: false }; // e.g., "*TuS Ferndorf 2*"
     };
     // --- END NEW HELPER ---
 
-    // --- NEW EMOJI LOGIC ---
     const ageGroup = gameData?.summary?.ageGroup; 
     let emoji = eventInfo.emoji; 
 
     if (ev.type === "Goal") {
         emoji = (ageGroup === "Men") ? "🤾‍♂️" : "🤾‍♀️";
     }
-    // --- END NEW EMOJI LOGIC ---
 
     switch (ev.type) { 
         case "Goal":
@@ -147,8 +140,9 @@ function formatEvent(ev, tickerState, gameData) {
                 scoreLine = `${homeTeamName}  ${pointsHome}:*${pointsGuest}* ${guestTeamName}`;
             }
             
-            // Use the new helper
             const target = getPlayerTarget();
+            // If it's a player (name or number), show "durch [Player]". 
+            // If it's not (e.g., team timeout), just show the label.
             const msg = target.isPlayer ? `${eventInfo.label} durch ${target.name}` : eventInfo.label;
             return `${scoreLine}\n${emoji} ${msg}${timeStr}`;
         }
@@ -158,13 +152,14 @@ function formatEvent(ev, tickerState, gameData) {
         case "Warning":
         case "Disqualification":
         case "DisqualificationWithReport": {
-            // Use the new helper
             const target = getPlayerTarget();
             let msg;
             if (target.isPlayer) {
+                // e.g., "Zeitstrafe für G. Bolduan (*TuS Ferndorf 3*)"
                 msg = `${eventInfo.label} für ${target.name} (*${teamName}*)`;
             } else {
-                msg = `${eventInfo.label} für ${target.name}`; // target.name is already *${teamName}*
+                // e.g., "Zeitstrafe für *TuS Ferndorf 3*"
+                msg = `${eventInfo.label} für ${target.name}`; 
             }
             return `${emoji} ${msg}${timeStr}`;
         }
@@ -207,16 +202,14 @@ function formatRecapEventLine(ev, tickerState) {
     const time = ev.time || '--:--';
     let scoreStr = ev.score ? ev.score.replace('-', ':') : '--:--';
     
-    // --- FIX: Use the new preformattedDetail string ---
+    // Use the preformattedDetail string
     const detailStr = ev.preformattedDetail || ev.message || eventInfo.label; 
 
-    // --- NEW EMOJI LOGIC ---
-    const ageGroup = tickerState.ageGroup; // Get ageGroup from tickerState
+    const ageGroup = tickerState.ageGroup; 
     let emoji = eventInfo.emoji; 
     if (ev.type === "Goal") {
         emoji = (ageGroup === "Men") ? "🤾‍♂️" : "🤾‍♀️";
     }
-    // --- END NEW EMOJI LOGIC ---
 
     switch (ev.type) {
         case "Goal":
@@ -227,7 +220,8 @@ function formatRecapEventLine(ev, tickerState) {
 
         case "StartPeriod":
         case "StopPeriod":
-            return `${emoji} ${time} | *${detailStr}* | *${scoreStr}*`;
+            // detailStr will be "Halbzeit | *17:8*" or "Spielende | *30:15*"
+            return `${emoji} ${time} | *${detailStr}*`;
 
         default:
             // This now correctly handles penalties, misses, etc.
@@ -239,7 +233,7 @@ function formatRecapEventLine(ev, tickerState) {
 module.exports = {
     loadSeenTickers,
     saveSeenTickers,
-    abbreviatePlayerName, // --- ADDED EXPORT ---
+    abbreviatePlayerName, 
     formatEvent, 
     loadScheduledTickers,
     saveScheduledTickers,
