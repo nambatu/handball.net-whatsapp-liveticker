@@ -406,7 +406,7 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * (REWRITTEN to pre-format recap messages)
+ * (REWRITTEN to pre-format recap messages without labels)
  * @param {object} gameData - The full data object from the API.
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -437,7 +437,7 @@ async function processEvents(gameData, tickerState, chatId) {
                 console.error(`[${chatId}] Fehler beim Senden der Nachricht für Event ${ev.id}:`, sendError);
             }
         }
-        // --- NEW: Pre-format recap messages ---
+        // --- NEW: Pre-format recap messages (NO LABELS) ---
         else if (tickerState.mode === 'recap') {
             const ignoredEvents = [];
             if (!ignoredEvents.includes(ev.type)) {
@@ -446,9 +446,8 @@ async function processEvents(gameData, tickerState, chatId) {
                 const lineup = gameData ? gameData.lineup : null;
                 const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
                 const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
-                const eventInfo = EVENT_MAP[ev.type] || EVENT_MAP["default"];
-
-                let detailStr = ev.message; // Default
+                
+                let detailStr = ""; // Default is now empty
                 const numMatch = ev.message.match(/\((\d+)\.\)/);
                 const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
                 let playerName = null;
@@ -464,21 +463,21 @@ async function processEvents(gameData, tickerState, chatId) {
                 switch (ev.type) {
                     case "Goal":
                     case "SevenMeterGoal":
-                        if (playerName) detailStr = `${eventInfo.label} durch ${playerName}`;
-                        else if (playerNumber) detailStr = `${eventInfo.label} durch Nr. ${playerNumber}`;
-                        else detailStr = ev.message.replace(/\s\([^)]*?\)$/, ''); // Cleaned message
+                        if (playerName) detailStr = `${playerName}`;
+                        else if (playerNumber) detailStr = `Nr. ${playerNumber}`;
+                        // else detailStr remains ""
                         break;
                     case "SevenMeterMissed":
                     case "TwoMinutePenalty":
                     case "Warning":
                     case "Disqualification":
                     case "DisqualificationWithReport":
-                        if (playerName) detailStr = `${eventInfo.label} für ${playerName} (*${teamName}*)`;
-                        else if (playerNumber) detailStr = `${eventInfo.label} für Nr. ${playerNumber} (*${teamName}*)`;
-                        else detailStr = `${eventInfo.label} für *${teamName}*`;
+                        if (playerName) detailStr = `${playerName} (*${teamName}*)`;
+                        else if (playerNumber) detailStr = `Nr. ${playerNumber} (*${teamName}*)`;
+                        else detailStr = `*${teamName}*`;
                         break;
                     case "Timeout":
-                        detailStr = `${eventInfo.label} für *${teamName}*`;
+                        detailStr = `*${teamName}*`;
                         break;
                     case "StartPeriod":
                         detailStr = (ev.time === "00:00") ? "Das Spiel hat begonnen!" : "Die zweite Halbzeit hat begonnen!";
