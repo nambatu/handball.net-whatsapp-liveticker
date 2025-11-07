@@ -147,7 +147,6 @@ async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
 
 /**
  * Activates the actual polling loop for a ticker.
- * --- FIX: Initializes recapMinuteCounter ---
  */
 async function beginActualPolling(chatId) {
     const tickerState = activeTickers.get(chatId);
@@ -169,8 +168,6 @@ async function beginActualPolling(chatId) {
     console.log(`[${chatId}] Aktiviere Polling (Modus: ${tickerState.mode}).`);
     tickerState.isPolling = true; 
     tickerState.isScheduled = false;
-
-    // --- NEW: Initialize recap counter ---
     tickerState.recapMinuteCounter = 0;
 
     const currentSchedule = loadScheduledTickers(scheduleFilePath);
@@ -197,9 +194,7 @@ async function beginActualPolling(chatId) {
     
     if (tickerState.mode === 'recap') {
         if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-        // --- NEW: Call sendRecapMessage which now handles its own timer logic ---
         tickerState.recapIntervalId = setInterval(() => {
-            // Pass 'false' to indicate this is a timer call, not a critical event
             sendRecapMessage(chatId, false, null);
         }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         console.log(`[${chatId}] Recap-Timer gestartet (${RECAP_INTERVAL_MINUTES} min).`);
@@ -218,62 +213,49 @@ async function beginActualPolling(chatId) {
 
 /**
  * Sends a recap message.
- * --- FIX: Uses fixed 5-minute intervals for the title ---
- * @param {string} chatId - The WhatsApp chat ID.
- * @param {boolean} isCritical - Flag to indicate if this is a critical event trigger.
- * @param {object} event - The critical event object (if any).
  */
 async function sendRecapMessage(chatId, isCritical = false, event = null) {
     const tickerState = activeTickers.get(chatId);
     
-    // 1. Check if there is anything to send
     if (!tickerState || !tickerState.isPolling || (tickerState.recapEvents.length === 0 && !isCritical)) {
-        // If it's a timer call and there are no events, just wait for the next timer
         if (!isCritical) {
             console.log(`[${chatId}] Kein Event für Recap gefunden. Überspringe.`);
             return; 
         }
     }
 
-    // 2. Determine the title
     let timeRangeTitle;
     const startMin = tickerState.recapMinuteCounter || 0;
 
     if (isCritical) {
-        // For critical events, title is "Start - Current Minute"
         const currentMinute = event ? parseInt(event.time.split(':')[0], 10) : startMin;
         timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(currentMinute).padStart(2, '0')}`;
-        // Update the counter to the critical event's time
         tickerState.recapMinuteCounter = currentMinute;
     } else {
-        // For timer events, title is "Start - Start + 5"
         const endMin = startMin + RECAP_INTERVAL_MINUTES;
         timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
-        // Update the counter for the next interval
         tickerState.recapMinuteCounter = endMin;
     }
 
-    // 3. Get the events to send (everything in the buffer)
     const eventsToSend = [...tickerState.recapEvents];
-    // If it's a critical event, add it to the list (it hasn't been added yet)
     if (isCritical && event) {
         eventsToSend.push(event);
     }
     
     if (eventsToSend.length === 0) {
         console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden. Überspringe.`);
+        tickerState.recapEvents = []; // Clear buffer
         return;
     }
 
     console.log(`[${chatId}] Sende ${eventsToSend.length} Events für Recap ${timeRangeTitle}.`);
 
-    // 4. Build and send the message
     eventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
     const recapLines = eventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
     if (validLines.length === 0) {
-        tickerState.recapEvents = []; // Clear buffer anyway
+        tickerState.recapEvents = []; 
         return;
     }
 
@@ -283,7 +265,7 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
 
     try {
         await client.sendMessage(chatId, finalMessage);
-        tickerState.recapEvents = []; // Clear buffer after successful send
+        tickerState.recapEvents = []; 
     } catch (error) {
         console.error(`[${chatId}] Fehler beim Senden der Recap-Nachricht:`, error);
         tickerState.recapEvents = []; 
@@ -326,7 +308,6 @@ function dispatcherLoop() {
 
 /**
  * Executes a single job (either 'schedule' or 'poll') using Axios.
- * --- FIX: Initializes lastKnownScore ---
  */
 async function runWorker(job) {
     const { chatId, jobId, type, gameId, meetingPageUrl } = job; 
@@ -370,8 +351,7 @@ async function runWorker(job) {
             tickerState.teamNames = teamNames;
             tickerState.meetingPageUrl = meetingPageUrl; 
             tickerState.ageGroup = gameSummary.ageGroup; 
-            // --- NEW: Initialize lastKnownScore ---
-            tickerState.lastKnownScore = '0-0'; // Use API format
+            tickerState.lastKnownScore = '0-0'; 
 
             if (delay > 0) { // Still in future
                 console.log(`[${chatId}] Planungs-Job erfolgreich...`);
@@ -417,7 +397,7 @@ async function runWorker(job) {
                  tickerState.ageGroup = gameSummary.ageGroup;
              }
              if (!tickerState.lastKnownScore) {
-                 tickerState.lastKnownScore = '0-0'; // Ensure it exists
+                 tickerState.lastKnownScore = '0-0'; 
              }
              
              const newUpdatedAt = gameSummary.updatedAt;
@@ -451,11 +431,6 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * --- FIX: Handles lastKnownScore and fixed recap titles ---
- * @param {object} gameData - The full data object from the API.
- * @param {object} tickerState - The state object for the specific ticker.
- * @param {string} chatId - The WhatsApp chat ID.
- * @returns {boolean} - True if new, unseen events were processed, false otherwise.
  */
 async function processEvents(gameData, tickerState, chatId) {
     if (!gameData || !Array.isArray(gameData.events)) return false;
@@ -463,7 +438,6 @@ async function processEvents(gameData, tickerState, chatId) {
     let newUnseenEventsProcessed = false;
     const events = gameData.events.slice().reverse();
 
-    // --- NEW: Get last known score from state ---
     let lastKnownScore = tickerState.lastKnownScore || '0-0';
 
     for (const ev of events) {
@@ -472,18 +446,15 @@ async function processEvents(gameData, tickerState, chatId) {
         tickerState.seen.add(ev.id);
         newUnseenEventsProcessed = true;
 
-        // Update lastKnownScore if this event has one
         if (ev.score) {
             lastKnownScore = ev.score;
         }
 
-        // --- NEW: Inject the correct score into the event object *before* processing ---
-        // This makes it available to both live and recap modes.
         const eventWithScore = { ...ev, score: ev.score || lastKnownScore };
         
         let msg = "";
         if (tickerState.mode === 'live') {
-            msg = formatEvent(eventWithScore, tickerState, gameData); // Pass event with fixed score
+            msg = formatEvent(eventWithScore, tickerState, gameData); 
         }
 
         if (tickerState.mode === 'live' && msg) {
@@ -494,7 +465,6 @@ async function processEvents(gameData, tickerState, chatId) {
                 console.error(`[${chatId}] Fehler beim Senden der Nachricht für Event ${ev.id}:`, sendError);
             }
         }
-        // Pre-format recap messages
         else if (tickerState.mode === 'recap') {
             const ignoredEvents = [];
             if (!ignoredEvents.includes(ev.type)) {
@@ -546,25 +516,21 @@ async function processEvents(gameData, tickerState, chatId) {
                 }
                 
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
-                // Push the event *with* the fixed score and preformatted detail
                 tickerState.recapEvents.push({ ...eventWithScore, preformattedDetail: detailStr });
             }
         }
         
-        // --- UPDATED: Reset timer on critical event ---
         const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
         if (isCriticalEvent && tickerState.mode === 'recap') {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
             
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-            // Pass 'true' and the event to the recap function
             await sendRecapMessage(chatId, true, eventWithScore); 
             
             tickerState.recapIntervalId = setInterval(() => {
                 sendRecapMessage(chatId, false, null);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         }
-        // --- END UPDATE ---
 
         if (ev.type === "StopPeriod") {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
@@ -577,7 +543,8 @@ async function processEvents(gameData, tickerState, chatId) {
                 if (index > -1) jobQueue.splice(index, 1);
 
                 try {
-                    const statsMessage = await extractGameStats(gameData.lineup, tickerState.teamNames);
+                    // --- FIX: Pass the 'events' array to extractGameStats ---
+                    const statsMessage = await extractGameStats(gameData.lineup, tickerState.teamNames, events);
                     setTimeout(async () => {
                          try { await client.sendMessage(chatId, statsMessage); }
                          catch(e) { console.error(`[${chatId}] Fehler beim Senden der Spielstatistiken:`, e); }
@@ -629,7 +596,6 @@ async function processEvents(gameData, tickerState, chatId) {
         }
     }
     
-    // --- NEW: Save the last known score for the next poll ---
     tickerState.lastKnownScore = lastKnownScore;
     
     return newUnseenEventsProcessed;
