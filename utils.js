@@ -100,9 +100,8 @@ function formatEvent(ev, tickerState, gameData) {
     const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
     const teamName = ev.team === 'Home' ? homeTeamName : guestTeamName;
 
-    // --- NEW: Helper to get player name or number ---
+    // Helper to get player name or number
     const getPlayerTarget = () => {
-        // Regex to find the player number like (15.) or (74.)
         const numMatch = ev.message.match(/\((\d+)\.\)/);
         const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
         let playerName = null;
@@ -114,12 +113,10 @@ function formatEvent(ev, tickerState, gameData) {
             }
         }
         
-        // Return the name, or the number, or null if neither is found
-        if (playerName) return { name: playerName, isPlayer: true }; // e.g., "G. Bolduan"
-        if (playerNumber) return { name: `Nr. ${playerNumber}`, isPlayer: true }; // e.g., "Nr. 68"
-        return { name: `*${teamName}*`, isPlayer: false }; // e.g., "*TuS Ferndorf 2*"
+        if (playerName) return { name: playerName, isPlayer: true }; 
+        if (playerNumber) return { name: `Nr. ${playerNumber}`, isPlayer: true }; 
+        return { name: `*${teamName}*`, isPlayer: false }; 
     };
-    // --- END NEW HELPER ---
 
     const ageGroup = gameData?.summary?.ageGroup; 
     let emoji = eventInfo.emoji; 
@@ -141,8 +138,6 @@ function formatEvent(ev, tickerState, gameData) {
             }
             
             const target = getPlayerTarget();
-            // If it's a player (name or number), show "durch [Player]". 
-            // If it's not (e.g., team timeout), just show the label.
             const msg = target.isPlayer ? `${eventInfo.label} durch ${target.name}` : eventInfo.label;
             return `${scoreLine}\n${emoji} ${msg}${timeStr}`;
         }
@@ -155,10 +150,8 @@ function formatEvent(ev, tickerState, gameData) {
             const target = getPlayerTarget();
             let msg;
             if (target.isPlayer) {
-                // e.g., "Zeitstrafe für G. Bolduan (*TuS Ferndorf 3*)"
                 msg = `${eventInfo.label} für ${target.name} (*${teamName}*)`;
             } else {
-                // e.g., "Zeitstrafe für *TuS Ferndorf 3*"
                 msg = `${eventInfo.label} für ${target.name}`; 
             }
             return `${emoji} ${msg}${timeStr}`;
@@ -192,7 +185,7 @@ function formatEvent(ev, tickerState, gameData) {
 
 /**
  * Formats a single event into a line for the recap message.
- * (REWRITTEN to use pre-formatted details)
+ * (REWRITTEN to be simpler)
  * @param {object} ev - The raw event object, including 'preformattedDetail'.
  * @param {object} tickerState - The state object for the ticker.
  * @returns {string} - The formatted recap line string.
@@ -202,8 +195,8 @@ function formatRecapEventLine(ev, tickerState) {
     const time = ev.time || '--:--';
     let scoreStr = ev.score ? ev.score.replace('-', ':') : '--:--';
     
-    // Use the preformattedDetail string
-    const detailStr = ev.preformattedDetail || ev.message || eventInfo.label; 
+    // Use the preformattedDetail string we built in polling.js
+    const detailStr = ev.preformattedDetail || ""; 
 
     const ageGroup = tickerState.ageGroup; 
     let emoji = eventInfo.emoji; 
@@ -219,9 +212,11 @@ function formatRecapEventLine(ev, tickerState) {
             return `${emoji} ${time} | ${scoreStr} | ${detailStr}`;
 
         case "StartPeriod":
-        case "StopPeriod":
-            // detailStr will be "Halbzeit | *17:8*" or "Spielende | *30:15*"
             return `${emoji} ${time} | *${detailStr}*`;
+            
+        case "StopPeriod":
+            const [homeScore, awayScore] = scoreStr.split(':');
+            return `${emoji} ${time} | *${detailStr}* | *${homeScore}:${awayScore}*`;
 
         default:
             // This now correctly handles penalties, misses, etc.

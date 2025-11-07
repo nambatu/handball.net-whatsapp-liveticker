@@ -446,7 +446,7 @@ async function processEvents(gameData, tickerState, chatId) {
                 const lineup = gameData ? gameData.lineup : null;
                 const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
                 const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
-                
+
                 let detailStr = ""; // Default is now empty
                 const numMatch = ev.message.match(/\((\d+)\.\)/);
                 const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
@@ -465,7 +465,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     case "SevenMeterGoal":
                         if (playerName) detailStr = `${playerName}`;
                         else if (playerNumber) detailStr = `Nr. ${playerNumber}`;
-                        // else detailStr remains ""
+                        // else detailStr remains "" (anonymous goal)
                         break;
                     case "SevenMeterMissed":
                     case "TwoMinutePenalty":
@@ -483,13 +483,13 @@ async function processEvents(gameData, tickerState, chatId) {
                         detailStr = (ev.time === "00:00") ? "Das Spiel hat begonnen!" : "Die zweite Halbzeit hat begonnen!";
                         break;
                     case "StopPeriod":
-                         const [homeScore, awayScore] = ev.score.replace('-', ':').split(':');
                          const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
                          if (minute > 30) detailStr = `Spielende`;
                          else detailStr = `Halbzeit`;
                         break;
                     default:
-                        detailStr = ev.message; // Fallback to original message
+                        // Fallback to a cleaned message, but no label
+                        detailStr = ev.message.replace(/\s\([^)]*?\)$/, '').replace(/\s\(\d+\.\)/, '');
                 }
                 // --- End pre-formatting ---
                 
