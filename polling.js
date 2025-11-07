@@ -499,8 +499,18 @@ async function processEvents(gameData, tickerState, chatId) {
         
         const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
         if (isCriticalEvent && tickerState.mode === 'recap') {
-            console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort.`);
+            console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
+
+            // 1. Clear the old 5-minute timer
+            if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
+
+            // 2. Send the recap message
             await sendRecapMessage(chatId); 
+
+            // 3. Start a new 5-minute timer from this exact moment
+            tickerState.recapIntervalId = setInterval(() => {
+                sendRecapMessage(chatId);
+            }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         }
 
         if (ev.type === "StopPeriod") {
