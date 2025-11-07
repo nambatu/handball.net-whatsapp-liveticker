@@ -66,17 +66,48 @@ function buildDataUrl(gameId) {
     return `https://www.handball.net/a/sportdata/1/games/${gameId}/combined?`;
 }
 
+/**
+ * NEW: Fetches and extracts the schedule JSON from a team's spielplan page.
+ * @param {string} teamPageUrl - The URL of the team's schedule page.
+ * @returns {Array|null} - An array of game objects, or null if not found.
+ */
 async function getSpielplanData(teamPageUrl) {
     try {
+        // We fetch the main Document URL, no extra parameters needed.
         const response = await axios.get(teamPageUrl, { timeout: 10000 });
         const html = response.data;
-        const regex = /"schedule":(\[.*?\]),"lastUpdated":/;
+
+        // --- FIX: Added 's' flag for multi-line matching ---
+        const regex = /"schedule":(\[.*?\]),"lastUpdated":/s;
         const match = html.match(regex);
 
         if (match && match[1]) {
-            return JSON.parse(match[1]); 
+            try {
+                // The match is a JSON string. Parse it.
+                const scheduleData = JSON.parse(match[1]);
+                return scheduleData;
+            } catch (e) {
+                console.error("AutoSchedule: Gefundenes JSON war fehlerhaft:", e.message);
+                return null;
+            }
         }
+        
+        // Fallback regex (if "lastUpdated" isn't next)
+        const regexFallback = /"schedule":(\[.*?\]),"/s;
+        const matchFallback = html.match(regexFallback);
+        if (matchFallback && matchFallback[1]) {
+             try {
+                const scheduleData = JSON.parse(matchFallback[1]);
+                return scheduleData;
+            } catch (e) {
+                console.error("AutoSchedule (Fallback): Gefundenes JSON war fehlerhaft:", e.message);
+                return null;
+            }
+        }
+
+        console.error("Konnte 'schedule' JSON in der HTML-Antwort nicht finden.");
         return null;
+        
     } catch (error) {
         console.error("Fehler beim Abrufen der Spielplan-Daten:", error.message);
         throw new Error("Spielplan-Daten konnten nicht abgerufen werden.");
