@@ -102,7 +102,8 @@ function formatEvent(ev, tickerState, gameData) {
 
     // Helper to get player name or number
     const getPlayerTarget = () => {
-        const numMatch = ev.message.match(/\((\d+)\.\)/);
+        // --- FIX: Look for digits followed by a dot (e.g., "67." or "(76.)") ---
+        const numMatch = ev.message.match(/(\d+)\./); 
         const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
         let playerName = null;
 

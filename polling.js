@@ -406,7 +406,6 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * (REWRITTEN to pre-format recap messages without labels)
  * @param {object} gameData - The full data object from the API.
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -437,18 +436,18 @@ async function processEvents(gameData, tickerState, chatId) {
                 console.error(`[${chatId}] Fehler beim Senden der Nachricht für Event ${ev.id}:`, sendError);
             }
         }
-        // --- NEW: Pre-format recap messages (NO LABELS) ---
+        // --- Pre-format recap messages (NO LABELS) ---
         else if (tickerState.mode === 'recap') {
             const ignoredEvents = [];
             if (!ignoredEvents.includes(ev.type)) {
                 
-                // --- Pre-format the detail string *now* ---
                 const lineup = gameData ? gameData.lineup : null;
                 const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
                 const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
 
                 let detailStr = ""; // Default is now empty
-                const numMatch = ev.message.match(/\((\d+)\.\)/);
+                // --- FIX: Look for digits followed by a dot (e.g., "67." or "(76.)") ---
+                const numMatch = ev.message.match(/(\d+)\./);
                 const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
                 let playerName = null;
 
@@ -488,18 +487,15 @@ async function processEvents(gameData, tickerState, chatId) {
                          else detailStr = `Halbzeit`;
                         break;
                     default:
-                        // Fallback to a cleaned message, but no label
-                        detailStr = ev.message.replace(/\s\([^)]*?\)$/, '').replace(/\s\(\d+\.\)/, '');
+                        detailStr = ""; // Default to empty
                 }
-                // --- End pre-formatting ---
                 
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
                 tickerState.recapEvents.push({ ...ev, preformattedDetail: detailStr });
             }
         }
-        // --- END NEW ---
         
-        // --- UPDATED: Reset timer on critical event ---
+        // Reset timer on critical event
         const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
         if (isCriticalEvent && tickerState.mode === 'recap') {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
@@ -511,7 +507,6 @@ async function processEvents(gameData, tickerState, chatId) {
                 sendRecapMessage(chatId);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         }
-        // --- END UPDATE ---
 
         if (ev.type === "StopPeriod") {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
@@ -547,7 +542,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     catch (e) { console.error(`[${chatId}] Fehler beim Senden der Abschlussnachricht: `, e); }
                 }, 4000); 
 
-                // --- SCHEDULE CLEANUP & AUTO-SCHEDULE HOOK ---
+                // SCHEDULE CLEANUP & AUTO-SCHEDULE HOOK
                 setTimeout(async () => {
                     if (activeTickers.has(chatId)) {
                         activeTickers.delete(chatId);
