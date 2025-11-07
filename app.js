@@ -5,8 +5,8 @@ const path = require('path');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { loadSeenTickers, saveSeenTickers, loadScheduledTickers, saveScheduledTickers } = require('./utils.js');
-// Import the new getGameIdFromUrl helper
-const { initializePolling, masterScheduler, dispatcherLoop, startPolling, beginActualPolling, getGameIdFromUrl } = require('./polling.js');
+// Import the new autoScheduleNextGame and getGameIdFromUrl helpers
+const { initializePolling, masterScheduler, dispatcherLoop, startPolling, beginActualPolling, getGameIdFromUrl, autoScheduleNextGame } = require('./polling.js');
 
 // --- GLOBAL STATE ---
 const activeTickers = new Map();
@@ -39,6 +39,7 @@ client.on('ready', () => {
     loadSeenTickers(activeTickers, SEEN_FILE);
 
     const scheduledTickersData = loadScheduledTickers(SCHEDULE_FILE);
+    const currentSchedule = scheduledTickersData; // for cleaning up
     const now = Date.now();
     let rescheduledCount = 0;
 
@@ -47,19 +48,21 @@ client.on('ready', () => {
         const startTime = new Date(scheduleData.startTime);
         const delay = startTime.getTime() - now;
 
-        // --- FIX: Ensure gameId is set on restart ---
         const gameId = getGameIdFromUrl(scheduleData.meetingPageUrl);
         if (!gameId) {
             console.warn(`[${chatId}] Überspringe geladenen Ticker, ungültige URL: ${scheduleData.meetingPageUrl}`);
-            continue; // Skip this ticker
+            continue; 
         }
-        // --- END FIX ---
 
         const tickerState = activeTickers.get(chatId) || { seen: new Set() };
         tickerState.meetingPageUrl = scheduleData.meetingPageUrl;
-        tickerState.gameId = gameId; // --- ADDED THIS LINE ---
+        tickerState.gameId = gameId; 
         tickerState.groupName = scheduleData.groupName;
         tickerState.mode = scheduleData.mode; 
+        // --- ADDED FOR AUTOSCHEDULE RESTART ---
+        tickerState.isAutoSchedule = scheduleData.isAutoSchedule || false;
+        tickerState.teamPageUrl = scheduleData.teamPageUrl || null;
+        // --- END ---
         tickerState.recapEvents = []; 
         tickerState.isPolling = false; 
         activeTickers.set(chatId, tickerState); 
@@ -72,8 +75,12 @@ client.on('ready', () => {
             }, delay);
             rescheduledCount++;
         } else {
-            console.log(`[${chatId}] Geplante Startzeit verpasst. Starte Polling sofort.`);
-            beginActualPolling(chatId); 
+             // If it's an old, finished game that was just scheduled, clean it up.
+             if (!activeTickers.has(chatId)) { // Check if it's already running
+                 console.log(`[${chatId}] Geplante Startzeit verpasst, Ticker war nicht aktiv. Wird ignoriert.`);
+                 delete currentSchedule[chatId];
+                 saveScheduledTickers(currentSchedule, SCHEDULE_FILE);
+             }
         }
     }
     if (rescheduledCount > 0) {
@@ -107,7 +114,8 @@ client.on('message', async msg => {
     const command = args[0].toLowerCase(); 
     const groupName = chat.name;          
 
-    if (command === '!hnet-start' && args.length >= 2) {
+    // --- !start Command ---
+    if (command === '!start' && args.length >= 2) { 
         if (activeTickers.has(chatId) && (activeTickers.get(chatId).isPolling || activeTickers.get(chatId).isScheduled)) {
             await msg.reply('In dieser Gruppe läuft oder ist bereits ein Live-Ticker geplant. Stoppen oder resetten Sie ihn zuerst.');
             return;
@@ -116,18 +124,27 @@ client.on('message', async msg => {
         const mode = (args[2] && args[2].toLowerCase() === 'recap') ? 'recap' : 'live';
 
         try {
-            await startPolling(meetingPageUrl, chatId, groupName, mode);
+            // Call startPolling (queueTickerScheduling) with isAutoSchedule = false
+            await startPolling(meetingPageUrl, chatId, groupName, mode, false, null);
         } catch (error) {
             console.error(`[${chatId}] Kritischer Fehler beim Starten des Tickers:`, error);
             await msg.reply('Ein kritischer Fehler ist aufgetreten und der Ticker konnte nicht gestartet werden.');
             activeTickers.delete(chatId); 
         }
     }
-    else if (command === '!hnet-stop') {
+    // --- !stop Command ---
+    else if (command === '!stop') { 
         const tickerState = activeTickers.get(chatId);
         let wasStopped = false; 
 
         if (tickerState) {
+            // --- NEW: Disable auto-scheduling on manual stop ---
+            if (tickerState.isAutoSchedule) {
+                tickerState.isAutoSchedule = false;
+                console.log(`[${chatId}] Auto-Schedule Kette gestoppt.`);
+            }
+            // --- END NEW ---
+            
             if (tickerState.isScheduled && tickerState.scheduleTimeout) {
                 clearTimeout(tickerState.scheduleTimeout);
                 tickerState.isScheduled = false;
@@ -149,12 +166,12 @@ client.on('message', async msg => {
 
         if (wasStopped) {
             await client.sendMessage(chatId, 'Laufender/geplanter Live-Ticker in dieser Gruppe gestoppt.');
-            console.log(`Live-Ticker für Gruppe "${groupName}" (${chatId}) gestoppt.`);
         } else {
             await msg.reply('In dieser Gruppe läuft derzeit kein Live-Ticker.');
         }
     }
-    else if (command === '!hnet-reset') {
+    // --- !reset Command ---
+    else if (command === '!reset') { 
         const tickerState = activeTickers.get(chatId);
 
         if (tickerState) {
@@ -178,8 +195,40 @@ client.on('message', async msg => {
         await msg.reply('Alle Ticker-Daten für diese Gruppe wurden zurückgesetzt.');
         console.log(`Ticker-Daten für Gruppe "${groupName}" (${chatId}) wurden manuell zurückgesetzt.`);
     }
-    else if (command === '!hnet-start') {
+    // --- !start command without a URL ---
+    else if (command === '!start') { 
         await msg.reply(`Fehler: Bitte geben Sie eine gültige URL an. Format:\n\n!start <URL> [recap]`);
+    }
+    
+    // --- !autoschedule Command (NEW) ---
+    else if (command === '!autoschedule' && args.length >= 2) {
+        if (activeTickers.has(chatId) && (activeTickers.get(chatId).isPolling || activeTickers.get(chatId).isScheduled)) {
+            await msg.reply('In dieser Gruppe läuft oder ist bereits ein Live-Ticker geplant. Bitte `!stop` oder `!reset` zuerst.');
+            return;
+        }
+        
+        const teamPageUrl = args[1];
+        const mode = (args[2] && args[2].toLowerCase() === 'recap') ? 'recap' : 'live';
+        
+        try {
+            await client.sendMessage(chatId, `🤖 Analysiere Team-Spielplan... Dies kann einen Moment dauern.`);
+            // Call the new function
+            const gameScheduled = await autoScheduleNextGame(teamPageUrl, chatId, groupName, mode);
+            
+            if (gameScheduled) {
+                 await client.sendMessage(chatId, `✅ Auto-Planung erfolgreich! Das nächste Spiel wurde gefunden und geplant:\n\n*${gameScheduled.homeTeam.name}* vs *${gameScheduled.awayTeam.name}*\nam ${new Date(gameScheduled.startsAt).toLocaleDateString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'})}\num ${new Date(gameScheduled.startsAt).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'})} Uhr.\n\nNach Spielende wird automatisch das nächste Spiel geplant.`);
+            } else {
+                 await client.sendMessage(chatId, `ℹ️ Es wurden keine zukünftigen Spiele für dieses Team gefunden, die geplant werden können.`);
+            }
+        
+        } catch (error) {
+            console.error(`[${chatId}] Kritischer Fehler beim Auto-Scheduling:`, error);
+            await msg.reply(`Ein Fehler ist aufgetreten: ${error.message}`);
+        }
+    }
+    // --- Handle !autoschedule command without a URL ---
+    else if (command === '!autoschedule') {
+        await msg.reply(`Fehler: Bitte geben Sie eine Team-URL an. Format:\n\n!autoschedule <Team-URL> [recap]`);
     }
 });
 
