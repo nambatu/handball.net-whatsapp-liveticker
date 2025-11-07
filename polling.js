@@ -1,6 +1,7 @@
 // polling.js
 const axios = require('axios');
-const { saveSeenTickers, formatEvent, saveScheduledTickers, loadScheduledTickers, formatRecapEventLine } = require('./utils.js');
+// --- IMPORT abbreviatePlayerName ---
+const { saveSeenTickers, formatEvent, saveScheduledTickers, loadScheduledTickers, formatRecapEventLine, abbreviatePlayerName } = require('./utils.js');
 const { generateGameSummary, extractGameStats } = require('./ai.js');
 const { EVENT_MAP } = require('./config.js');
 
@@ -27,23 +28,11 @@ function initializePolling(tickers, queue, whatsappClient, seenFile, scheduleFil
 
 // --- HELPER FUNCTIONS (URL Parsers) ---
 
-/**
- * Checks if a string segment looks like a valid Game ID.
- * (e.g., "nuliga.hvberlin.8062487" -> true, "ticker" -> false)
- * @param {string} segment - The URL path segment.
- * @returns {boolean} - True if it looks like an ID.
- */
 function looksLikeGameId(segment) {
     if (!segment) return false;
-    // A Game ID must contain both a dot and a number.
     return segment.includes('.') && /\d/.test(segment);
 }
 
-/**
- * Extracts the Game ID from any valid handball.net URL.
- * @param {string} meetingPageUrl - The user-provided URL.
- * @returns {string|null} - The extracted game ID or null.
- */
 function getGameIdFromUrl(meetingPageUrl) {
     try {
         const url = new URL(meetingPageUrl);
@@ -57,14 +46,14 @@ function getGameIdFromUrl(meetingPageUrl) {
         let lastSegment = segments[segments.length - 1];
 
         if (looksLikeGameId(lastSegment)) {
-            return lastSegment; // Found it!
+            return lastSegment; 
         }
 
-        segments.pop(); // Remove the "view" segment
+        segments.pop(); 
         let potentialId = segments[segments.length - 1];
         
         if (looksLikeGameId(potentialId)) {
-            return potentialId; // Found it!
+            return potentialId; 
         }
         
         return null; 
@@ -74,31 +63,19 @@ function getGameIdFromUrl(meetingPageUrl) {
     }
 }
 
-/**
- * Builds the full JSON data URL from a game ID.
- * @param {string} gameId - The game ID.
- * @returns {string} - The full API URL.
- */
 function buildDataUrl(gameId) {
     return `https://www.handball.net/a/sportdata/1/games/${gameId}/combined?`;
 }
 
-/**
- * NEW: Fetches and extracts the schedule JSON from a team's spielplan page.
- * @param {string} teamPageUrl - The URL of the team's schedule page.
- * @returns {Array|null} - An array of game objects, or null if not found.
- */
 async function getSpielplanData(teamPageUrl) {
     try {
         const response = await axios.get(teamPageUrl, { timeout: 10000 });
         const html = response.data;
-
-        // This regex looks for the "schedule":[...] array inside the HTML/script
         const regex = /"schedule":(\[.*?\]),"lastUpdated":/;
         const match = html.match(regex);
 
         if (match && match[1]) {
-            return JSON.parse(match[1]); // Parse the captured group
+            return JSON.parse(match[1]); 
         }
         return null;
     } catch (error) {
@@ -112,12 +89,6 @@ async function getSpielplanData(teamPageUrl) {
 
 /**
  * Creates the initial ticker state and adds a 'schedule' job to the queue.
- * @param {string} meetingPageUrl - The URL of the handball.net game webpage.
- * @param {string} chatId - The WhatsApp chat ID where the ticker runs.
- * @param {string} groupName - The name of the WhatsApp group (for AI).
- * @param {('live'|'recap')} mode - The desired ticker mode ('live' or 'recap').
- * @param {boolean} isAutoSchedule - Flag for auto-schedule chain.
- * @param {string} teamPageUrl - The URL of the team's main schedule page (for auto-schedule).
  */
 async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, isAutoSchedule = false, teamPageUrl = null) {
     const gameId = getGameIdFromUrl(meetingPageUrl);
@@ -126,7 +97,6 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, is
         return;
     }
 
-    // Create initial state in memory
     const tickerState = activeTickers.get(chatId) || { seen: new Set() };
     tickerState.isPolling = false; 
     tickerState.isScheduling = true;
@@ -135,36 +105,28 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, is
     tickerState.groupName = groupName;
     tickerState.mode = mode;
     tickerState.recapEvents = []; 
-    // --- NEW FIELDS FOR AUTOSCHEDULE ---
     tickerState.isAutoSchedule = isAutoSchedule;
-    tickerState.teamPageUrl = teamPageUrl; // This is the /spielplan URL
-    // --- END NEW ---
+    tickerState.teamPageUrl = teamPageUrl; 
     activeTickers.set(chatId, tickerState); 
 
     jobQueue.push({
         type: 'schedule', 
         chatId,
         gameId: gameId, 
-        meetingPageUrl: meetingPageUrl, // Pass the game URL for saving
+        meetingPageUrl: meetingPageUrl,
         groupName,
         mode,
         jobId: Date.now()
     });
 
     console.log(`[${chatId}] Planungs-Job für ${gameId} zur Warteschlange hinzugefügt. Aktuelle Länge: ${jobQueue.length}`);
-    if (!isAutoSchedule) { // Only send this for manual !start
+    if (!isAutoSchedule) { 
         await client.sendMessage(chatId, `⏳ Ticker-Planung für "${groupName}" wird bearbeitet...`);
     }
 }
 
 /**
  * NEW: Main function for the !autoschedule command.
- * Finds the *next* future game and schedules it.
- * @param {string} teamPageUrl - The URL of the team's schedule page.
- * @param {string} chatId - The WhatsApp chat ID.
- * @param {string} groupName - The name of the WhatsApp group.
- * @param {string} mode - 'live' or 'recap'.
- * @returns {object|null} - The game object that was scheduled, or null.
  */
 async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
     const games = await getSpielplanData(teamPageUrl);
@@ -172,27 +134,20 @@ async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
         throw new Error("Konnte keine Spiele auf der Team-Seite finden.");
     }
 
-    // Find the first game that is 'Pre' (not yet played)
     const nextGame = games.find(game => game.state === 'Pre');
 
     if (nextGame) {
-        // Construct the game URL from the game ID
         const gameUrl = `https://www.handball.net/spiele/${nextGame.id}`;
-        
-        // Call our existing scheduling function, but with auto-schedule flags
         await queueTickerScheduling(gameUrl, chatId, groupName, mode, true, teamPageUrl);
-        
-        return nextGame; // Return the game object to app.js
+        return nextGame; 
     }
     
-    return null; // No future games found
+    return null; 
 }
 
 
 /**
  * Activates the actual polling loop for a ticker.
- * (This function is unchanged)
- * @param {string} chatId - The WhatsApp chat ID.
  */
 async function beginActualPolling(chatId) {
     const tickerState = activeTickers.get(chatId);
@@ -258,8 +213,6 @@ async function beginActualPolling(chatId) {
 
 /**
  * Sends a recap message.
- * (This function is unchanged)
- * @param {string} chatId - The WhatsApp chat ID.
  */
 async function sendRecapMessage(chatId) {
     const tickerState = activeTickers.get(chatId);
@@ -277,6 +230,7 @@ async function sendRecapMessage(chatId) {
     const endMinute = lastEventTime ? lastEventTime.split(':')[0] : '??';
     const timeRangeTitle = `Minute ${startMinute} - ${endMinute}`;
 
+    // --- Pass tickerState to formatRecapEventLine for ageGroup ---
     const recapLines = tickerState.recapEvents.map(ev => formatRecapEventLine(ev, tickerState));
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
@@ -301,7 +255,6 @@ async function sendRecapMessage(chatId) {
 
 /**
  * Master Scheduler: Runs periodically.
- * (This function is unchanged)
  */
 function masterScheduler() {
     const pollingTickers = Array.from(activeTickers.values()).filter(t => t.isPolling);
@@ -325,7 +278,6 @@ function masterScheduler() {
 
 /**
  * Dispatcher Loop: Runs frequently.
- * (This function is unchanged)
  */
 function dispatcherLoop() {
     if (jobQueue.length > 0 && activeWorkers < MAX_WORKERS) {
@@ -337,8 +289,6 @@ function dispatcherLoop() {
 
 /**
  * Executes a single job (either 'schedule' or 'poll') using Axios.
- * (Modified to save auto-schedule state)
- * @param {object} job - The job object from the queue.
  */
 async function runWorker(job) {
     const { chatId, jobId, type, gameId, meetingPageUrl } = job; 
@@ -380,14 +330,14 @@ async function runWorker(job) {
             const startDateLocale = startTime.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             tickerState.teamNames = teamNames;
-            // tickerState.lastUpdatedAt = gameSummary.updatedAt; // This is the fix from before
             tickerState.meetingPageUrl = meetingPageUrl; 
+            // --- NEW: Store ageGroup for recap emoji ---
+            tickerState.ageGroup = gameSummary.ageGroup; 
 
             if (delay > 0) { // Still in future
                 console.log(`[${chatId}] Planungs-Job erfolgreich...`);
                 const modeDescriptionScheduled = (tickerState.mode === 'recap') ? `im Recap-Modus (${RECAP_INTERVAL_MINUTES}-Minuten-Zusammenfassungen)` : "mit Live-Updates";
                 
-                // Only send message if it's NOT an auto-schedule (to avoid spam)
                 if (!tickerState.isAutoSchedule) {
                     await client.sendMessage(chatId, `✅ Ticker für *${teamNames.home}* vs *${teamNames.guest}* ist geplant (${modeDescriptionScheduled}) und startet automatisch am ${startDateLocale} um ca. ${startTimeLocale} Uhr.`);                
                 }
@@ -396,14 +346,14 @@ async function runWorker(job) {
                 tickerState.isScheduled = true;
                 
                 const currentSchedule = loadScheduledTickers(scheduleFilePath);
-                // --- MODIFIED to save auto-schedule state ---
                 currentSchedule[chatId] = {
                     meetingPageUrl: tickerState.meetingPageUrl, 
                     startTime: startTime.toISOString(),
                     groupName: tickerState.groupName,
                     mode: tickerState.mode,
                     isAutoSchedule: tickerState.isAutoSchedule,
-                    teamPageUrl: tickerState.teamPageUrl
+                    teamPageUrl: tickerState.teamPageUrl,
+                    ageGroup: tickerState.ageGroup // --- NEW: Save ageGroup
                 };
                 saveScheduledTickers(currentSchedule, scheduleFilePath);
                 tickerState.scheduleTimeout = setTimeout(() => beginActualPolling(chatId), delay);
@@ -412,7 +362,6 @@ async function runWorker(job) {
                 let startMessage = `▶️ Ticker für *${teamNames.home}* vs *${teamNames.guest}* wird sofort gestartet. `;
                 startMessage += (tickerState.mode === 'recap') ? `Du erhältst alle ${RECAP_INTERVAL_MINUTES} Minuten eine Zusammenfassung. 📬` : `Du erhältst alle Events live! ⚽`;
                 
-                // Only send message if it's NOT an auto-schedule (to avoid spam)
                 if (!tickerState.isAutoSchedule) {
                     await client.sendMessage(chatId, startMessage);
                 }
@@ -424,6 +373,10 @@ async function runWorker(job) {
         else if (type === 'poll') {
              if (!tickerState.teamNames) { 
                  tickerState.teamNames = { home: gameSummary.homeTeam.name, guest: gameSummary.awayTeam.name }; 
+             }
+             // --- NEW: Store ageGroup if missing ---
+             if (!tickerState.ageGroup) {
+                 tickerState.ageGroup = gameSummary.ageGroup;
              }
              
              const newUpdatedAt = gameSummary.updatedAt;
@@ -457,7 +410,7 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
- * (MODIFIED to add auto-schedule hook)
+ * (MODIFIED to pre-format recap messages)
  * @param {object} gameData - The full data object from the API.
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -488,30 +441,83 @@ async function processEvents(gameData, tickerState, chatId) {
                 console.error(`[${chatId}] Fehler beim Senden der Nachricht für Event ${ev.id}:`, sendError);
             }
         }
+        // --- NEW: Pre-format recap messages ---
         else if (tickerState.mode === 'recap') {
             const ignoredEvents = [];
             if (!ignoredEvents.includes(ev.type)) {
+                
+                // --- Pre-format the detail string *now* ---
+                const lineup = gameData ? gameData.lineup : null;
+                const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
+                const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
+                const eventInfo = EVENT_MAP[ev.type] || EVENT_MAP["default"];
+
+                let detailStr = ev.message; // Default
+                const numMatch = ev.message.match(/\((\d+)\.\)/);
+                const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
+                let playerName = null;
+
+                if (playerNumber && team && lineup && lineup[team]) {
+                    const player = lineup[team].find(p => p.number === playerNumber);
+                    if (player) {
+                        playerName = abbreviatePlayerName(player.firstname, player.lastname); // From utils
+                    }
+                }
+
+                // Override detailStr with new format
+                switch (ev.type) {
+                    case "Goal":
+                    case "SevenMeterGoal":
+                        if (playerName) detailStr = `${eventInfo.label} durch ${playerName}`;
+                        else if (playerNumber) detailStr = `${eventInfo.label} durch Nr. ${playerNumber}`;
+                        else detailStr = eventInfo.label;
+                        break;
+                    case "SevenMeterMissed":
+                    case "TwoMinutePenalty":
+                    case "Warning":
+                    case "Disqualification":
+                    case "DisqualificationWithReport":
+                        if (playerName) detailStr = `${eventInfo.label} für ${playerName} (*${teamName}*)`;
+                        else if (playerNumber) detailStr = `${eventInfo.label} für Nr. ${playerNumber} (*${teamName}*)`;
+                        else detailStr = `${eventInfo.label} für *${teamName}*`;
+                        break;
+                    case "Timeout":
+                        detailStr = `${eventInfo.label} für *${teamName}*`;
+                        break;
+                    case "StartPeriod":
+                    case "StopPeriod":
+                         const [homeScore, awayScore] = ev.score.replace('-', ':').split(':');
+                         const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
+                         if (minute > 30) detailStr = `Spielende | *${homeScore}:${awayScore}*`;
+                         else detailStr = `Halbzeit | *${homeScore}:${awayScore}*`;
+                        break;
+                }
+                // --- End pre-formatting ---
+                
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
-                tickerState.recapEvents = tickerState.recapEvents || [];
-                tickerState.recapEvents.push(ev);
+                // Store the event *with* the pre-formatted string
+                tickerState.recapEvents.push({ ...ev, preformattedDetail: detailStr });
             }
         }
+        // --- END NEW ---
         
+        // --- UPDATED: Reset timer on critical event ---
         const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
         if (isCriticalEvent && tickerState.mode === 'recap') {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
-
+            
             // 1. Clear the old 5-minute timer
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-
+            
             // 2. Send the recap message
             await sendRecapMessage(chatId); 
-
+            
             // 3. Start a new 5-minute timer from this exact moment
             tickerState.recapIntervalId = setInterval(() => {
                 sendRecapMessage(chatId);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         }
+        // --- END UPDATE ---
 
         if (ev.type === "StopPeriod") {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
@@ -555,7 +561,6 @@ async function processEvents(gameData, tickerState, chatId) {
                         console.log(`[${chatId}] Ticker-Daten automatisch bereinigt.`);
                     }
                     
-                    // --- NEW: AUTO-SCHEDULE HOOK ---
                     if (tickerState.isAutoSchedule) {
                         console.log(`[${chatId}] Auto-Schedule: Suche nach dem nächsten Spiel...`);
                         try {
@@ -570,9 +575,8 @@ async function processEvents(gameData, tickerState, chatId) {
                             await client.sendMessage(chatId, `🤖 Auto-Schedule: Fehler beim Planen des nächsten Spiels: ${e.message}`);
                         }
                     }
-                    // --- END HOOK ---
                     
-                }, 30000); // 30 seconds after game end
+                }, 30000); 
                 break; 
             }
         }
@@ -588,5 +592,5 @@ module.exports = {
     startPolling: queueTickerScheduling,
     beginActualPolling,
     getGameIdFromUrl,
-    autoScheduleNextGame // --- NEW EXPORT ---
+    autoScheduleNextGame 
 };
