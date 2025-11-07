@@ -147,6 +147,7 @@ async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
 
 /**
  * Activates the actual polling loop for a ticker.
+ * --- FIX: Initializes recapMinuteCounter ---
  */
 async function beginActualPolling(chatId) {
     const tickerState = activeTickers.get(chatId);
@@ -168,6 +169,9 @@ async function beginActualPolling(chatId) {
     console.log(`[${chatId}] Aktiviere Polling (Modus: ${tickerState.mode}).`);
     tickerState.isPolling = true; 
     tickerState.isScheduled = false;
+
+    // --- NEW: Initialize recap counter ---
+    tickerState.recapMinuteCounter = 0;
 
     const currentSchedule = loadScheduledTickers(scheduleFilePath);
     if (currentSchedule[chatId]) {
@@ -193,8 +197,10 @@ async function beginActualPolling(chatId) {
     
     if (tickerState.mode === 'recap') {
         if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
+        // --- NEW: Call sendRecapMessage which now handles its own timer logic ---
         tickerState.recapIntervalId = setInterval(() => {
-            sendRecapMessage(chatId);
+            // Pass 'false' to indicate this is a timer call, not a critical event
+            sendRecapMessage(chatId, false, null);
         }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         console.log(`[${chatId}] Recap-Timer gestartet (${RECAP_INTERVAL_MINUTES} min).`);
     }
@@ -212,39 +218,72 @@ async function beginActualPolling(chatId) {
 
 /**
  * Sends a recap message.
+ * --- FIX: Uses fixed 5-minute intervals for the title ---
+ * @param {string} chatId - The WhatsApp chat ID.
+ * @param {boolean} isCritical - Flag to indicate if this is a critical event trigger.
+ * @param {object} event - The critical event object (if any).
  */
-async function sendRecapMessage(chatId) {
+async function sendRecapMessage(chatId, isCritical = false, event = null) {
     const tickerState = activeTickers.get(chatId);
-    if (!tickerState || !tickerState.isPolling || !tickerState.recapEvents || tickerState.recapEvents.length === 0) {
-        if (tickerState && tickerState.recapEvents) tickerState.recapEvents = [];
-        return; 
+    
+    // 1. Check if there is anything to send
+    if (!tickerState || !tickerState.isPolling || (tickerState.recapEvents.length === 0 && !isCritical)) {
+        // If it's a timer call and there are no events, just wait for the next timer
+        if (!isCritical) {
+            console.log(`[${chatId}] Kein Event für Recap gefunden. Überspringe.`);
+            return; 
+        }
     }
 
-    console.log(`[${chatId}] Sende ${tickerState.recapEvents.length} Events im Recap.`);
+    // 2. Determine the title
+    let timeRangeTitle;
+    const startMin = tickerState.recapMinuteCounter || 0;
 
-    tickerState.recapEvents.sort((a, b) => a.timestamp - b.timestamp); 
-    const firstEventTime = tickerState.recapEvents[0].time;
-    const lastEventTime = tickerState.recapEvents[tickerState.recapEvents.length - 1].time;
-    const startMinute = firstEventTime ? firstEventTime.split(':')[0] : '0';
-    const endMinute = lastEventTime ? lastEventTime.split(':')[0] : '??';
-    const timeRangeTitle = `Minute ${startMinute} - ${endMinute}`;
+    if (isCritical) {
+        // For critical events, title is "Start - Current Minute"
+        const currentMinute = event ? parseInt(event.time.split(':')[0], 10) : startMin;
+        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(currentMinute).padStart(2, '0')}`;
+        // Update the counter to the critical event's time
+        tickerState.recapMinuteCounter = currentMinute;
+    } else {
+        // For timer events, title is "Start - Start + 5"
+        const endMin = startMin + RECAP_INTERVAL_MINUTES;
+        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
+        // Update the counter for the next interval
+        tickerState.recapMinuteCounter = endMin;
+    }
 
-    const recapLines = tickerState.recapEvents.map(ev => formatRecapEventLine(ev, tickerState));
+    // 3. Get the events to send (everything in the buffer)
+    const eventsToSend = [...tickerState.recapEvents];
+    // If it's a critical event, add it to the list (it hasn't been added yet)
+    if (isCritical && event) {
+        eventsToSend.push(event);
+    }
+    
+    if (eventsToSend.length === 0) {
+        console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden. Überspringe.`);
+        return;
+    }
+
+    console.log(`[${chatId}] Sende ${eventsToSend.length} Events für Recap ${timeRangeTitle}.`);
+
+    // 4. Build and send the message
+    eventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
+    const recapLines = eventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
     if (validLines.length === 0) {
-        console.log(`[${chatId}] Keine gültigen Events zum Senden im Recap gefunden.`);
-        tickerState.recapEvents = []; 
+        tickerState.recapEvents = []; // Clear buffer anyway
         return;
     }
 
     const teamHeader = `*${tickerState.teamNames.home}* : *${tickerState.teamNames.guest}*`;
     const recapBody = validLines.join('\n'); 
-    const finalMessage = `📬 *Recap ${timeRangeTitle}*\n\n${teamHeader}\n${recapBody}`;
+    const finalMessage = `📬 *${timeRangeTitle}*\n\n${teamHeader}\n${recapBody}`;
 
     try {
         await client.sendMessage(chatId, finalMessage);
-        tickerState.recapEvents = []; // Clear buffer
+        tickerState.recapEvents = []; // Clear buffer after successful send
     } catch (error) {
         console.error(`[${chatId}] Fehler beim Senden der Recap-Nachricht:`, error);
         tickerState.recapEvents = []; 
@@ -287,6 +326,7 @@ function dispatcherLoop() {
 
 /**
  * Executes a single job (either 'schedule' or 'poll') using Axios.
+ * --- FIX: Initializes lastKnownScore ---
  */
 async function runWorker(job) {
     const { chatId, jobId, type, gameId, meetingPageUrl } = job; 
@@ -330,6 +370,8 @@ async function runWorker(job) {
             tickerState.teamNames = teamNames;
             tickerState.meetingPageUrl = meetingPageUrl; 
             tickerState.ageGroup = gameSummary.ageGroup; 
+            // --- NEW: Initialize lastKnownScore ---
+            tickerState.lastKnownScore = '0-0'; // Use API format
 
             if (delay > 0) { // Still in future
                 console.log(`[${chatId}] Planungs-Job erfolgreich...`);
@@ -374,6 +416,9 @@ async function runWorker(job) {
              if (!tickerState.ageGroup) {
                  tickerState.ageGroup = gameSummary.ageGroup;
              }
+             if (!tickerState.lastKnownScore) {
+                 tickerState.lastKnownScore = '0-0'; // Ensure it exists
+             }
              
              const newUpdatedAt = gameSummary.updatedAt;
              if (!tickerState.lastUpdatedAt || newUpdatedAt > tickerState.lastUpdatedAt) { 
@@ -406,6 +451,7 @@ async function runWorker(job) {
 
 /**
  * Processes events, handles modes, calls AI, sends final stats, schedules cleanup.
+ * --- FIX: Handles lastKnownScore and fixed recap titles ---
  * @param {object} gameData - The full data object from the API.
  * @param {object} tickerState - The state object for the specific ticker.
  * @param {string} chatId - The WhatsApp chat ID.
@@ -417,15 +463,27 @@ async function processEvents(gameData, tickerState, chatId) {
     let newUnseenEventsProcessed = false;
     const events = gameData.events.slice().reverse();
 
+    // --- NEW: Get last known score from state ---
+    let lastKnownScore = tickerState.lastKnownScore || '0-0';
+
     for (const ev of events) {
         if (tickerState.seen.has(ev.id)) continue; 
 
         tickerState.seen.add(ev.id);
         newUnseenEventsProcessed = true;
 
+        // Update lastKnownScore if this event has one
+        if (ev.score) {
+            lastKnownScore = ev.score;
+        }
+
+        // --- NEW: Inject the correct score into the event object *before* processing ---
+        // This makes it available to both live and recap modes.
+        const eventWithScore = { ...ev, score: ev.score || lastKnownScore };
+        
         let msg = "";
         if (tickerState.mode === 'live') {
-            msg = formatEvent(ev, tickerState, gameData); // Pass full gameData
+            msg = formatEvent(eventWithScore, tickerState, gameData); // Pass event with fixed score
         }
 
         if (tickerState.mode === 'live' && msg) {
@@ -436,17 +494,16 @@ async function processEvents(gameData, tickerState, chatId) {
                 console.error(`[${chatId}] Fehler beim Senden der Nachricht für Event ${ev.id}:`, sendError);
             }
         }
-        // --- Pre-format recap messages (NO LABELS) ---
+        // Pre-format recap messages
         else if (tickerState.mode === 'recap') {
             const ignoredEvents = [];
             if (!ignoredEvents.includes(ev.type)) {
                 
                 const lineup = gameData ? gameData.lineup : null;
-                const team = ev.team ? ev.team.toLowerCase() : null; // 'home' or 'away'
+                const team = ev.team ? ev.team.toLowerCase() : null; 
                 const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
 
-                let detailStr = ""; // Default is now empty
-                // --- FIX: Look for digits followed by a dot (e.g., "67." or "(76.)") ---
+                let detailStr = ""; 
                 const numMatch = ev.message.match(/(\d+)\./);
                 const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
                 let playerName = null;
@@ -454,17 +511,15 @@ async function processEvents(gameData, tickerState, chatId) {
                 if (playerNumber && team && lineup && lineup[team]) {
                     const player = lineup[team].find(p => p.number === playerNumber);
                     if (player) {
-                        playerName = abbreviatePlayerName(player.firstname, player.lastname); // From utils
+                        playerName = abbreviatePlayerName(player.firstname, player.lastname); 
                     }
                 }
 
-                // Override detailStr with new format
                 switch (ev.type) {
                     case "Goal":
                     case "SevenMeterGoal":
                         if (playerName) detailStr = `${playerName}`;
                         else if (playerNumber) detailStr = `Nr. ${playerNumber}`;
-                        // else detailStr remains "" (anonymous goal)
                         break;
                     case "SevenMeterMissed":
                     case "TwoMinutePenalty":
@@ -487,26 +542,29 @@ async function processEvents(gameData, tickerState, chatId) {
                          else detailStr = `Halbzeit`;
                         break;
                     default:
-                        detailStr = ""; // Default to empty
+                        detailStr = ""; 
                 }
                 
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
-                tickerState.recapEvents.push({ ...ev, preformattedDetail: detailStr });
+                // Push the event *with* the fixed score and preformatted detail
+                tickerState.recapEvents.push({ ...eventWithScore, preformattedDetail: detailStr });
             }
         }
         
-        // Reset timer on critical event
+        // --- UPDATED: Reset timer on critical event ---
         const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
         if (isCriticalEvent && tickerState.mode === 'recap') {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
             
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-            await sendRecapMessage(chatId); 
+            // Pass 'true' and the event to the recap function
+            await sendRecapMessage(chatId, true, eventWithScore); 
             
             tickerState.recapIntervalId = setInterval(() => {
-                sendRecapMessage(chatId);
+                sendRecapMessage(chatId, false, null);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
         }
+        // --- END UPDATE ---
 
         if (ev.type === "StopPeriod") {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
@@ -537,7 +595,7 @@ async function processEvents(gameData, tickerState, chatId) {
                 } catch (e) { console.error(`[${chatId}] Fehler beim Generieren der AI-Zusammenfassung:`, e); }
 
                 setTimeout(async () => {
-                    const finalMessage = "Vielen Dank fürs Mitfiebern! 🥳\n\nDen Quellcode für diesen Bot könnt ihr hier einsehen:\nhttps://github.com/nambatu/whatsapp-liveticker-bot/";
+                    const finalMessage = "Vielen Dank fürs Mitfiebern! 🥳\n\nDen Quellcode für diesen Bot könnt ihr hier einsehen:\nhttps://github.com/nambatu/handball.net-whatsapp-liveticker-bot/";
                     try { await client.sendMessage(chatId, finalMessage); }
                     catch (e) { console.error(`[${chatId}] Fehler beim Senden der Abschlussnachricht: `, e); }
                 }, 4000); 
@@ -570,6 +628,10 @@ async function processEvents(gameData, tickerState, chatId) {
             }
         }
     }
+    
+    // --- NEW: Save the last known score for the next poll ---
+    tickerState.lastKnownScore = lastKnownScore;
+    
     return newUnseenEventsProcessed;
 }
 
