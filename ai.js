@@ -179,7 +179,7 @@ async function extractGameStats(lineupData, teamNames, events) {
 
 
 /**
- * REWRITTEN: Generates the AI game summary.
+ * REWRITTEN: Generates the AI game summary with fallback logic.
  * (Now uses the recalculated stats)
  * @param {Array} events - The chronological (reversed) list of events.
  * @param {object} teamNames - The team names object.
@@ -213,7 +213,6 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
         }
     }
 
-    // --- Uses the new robust stats function ---
     const gameStats = getStatsForPrompt(lineupData, teamNames, events);
 
     const prompt = `Du bist ein witziger, leicht sarkastischer und fachkundiger deutscher Handball-Kommentator.
@@ -246,20 +245,45 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
     1.  Gib deiner Zusammenfassung eine kreative, reißerische Überschrift in Fett (z.B. *Herzschlagfinale in der Halle West!* oder *Eine Lehrstunde in Sachen Abwehrschlacht.*).
     2.  Verwende die Statistiken für spitze Kommentare. (z.B. "Mit ${gameStats.guestPenalties} Zeitstrafen hat sich Team Gast das Leben selbst schwer gemacht." oder "Am Ende hat die Kaltschnäuzigkeit vom 7-Meter-Punkt den Unterschied gemacht."). Verwende die Statistiken nur, wenn sie auch sinnvoll oder wichtig für das Spiel waren.
     3.  Sei kreativ, vermeide Standardfloskeln. Gib dem Kommentar Persönlichkeit! Vermeide Sachen aus den Daten zu interpretieren die nicht daraus zu erschließen sind, bleibe lieber bei den Fakten als eine "zu offensive Abwehr" zu erfinden. 
-    4.  Falls Julian Langschwert, Tiard Brinkmann oder Simon Goßmann gespielt hat, lobe ihn sarkastisch bis in den Himmel.
+    4.  Falls Julian Langschwert, Tiard Brinkmann oder Simon Goßmann gespielt hat, lobe die jeweilige Person sarkastisch bis in den Himmel.
 
     Deine Zusammenfassung (nur Überschrift und Text, ohne "Zusammenfassung:"):`;
 
+    // --- NEW FALLBACK LOGIC ---
     try {
-        const response = await genAI.models.generateContent({
+        // 1. Try the "pro" model first
+        console.log("Versuche AI-Zusammenfassung mit 'gemini-2.5-pro'...");
+        const responsePro = await genAI.models.generateContent({
             model: "gemini-2.5-pro",
-            contents: prompt,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
         
-        return `🤖 *KI-Analyse zum Spiel:*\n\n${response.text}`;
+        return `🤖 *KI-Analyse zum Spiel:*\n\n${responsePro.response.text()}`;
+
     } catch (error) {
-        console.error("Fehler bei der AI-Zusammenfassung:", error);
-        return "";
+        console.warn(`Fehler bei 'gemini-2.5-pro': ${error.status} ${error.message}`);
+        
+        // 2. If it's an overload error, try the "flash" model
+        if (error.status === 503 || (error.message && error.message.includes("overloaded"))) {
+            console.log("Pro-Modell überlastet. Versuche Fallback mit 'gemini-2.5-flash'...");
+            try {
+                const responseFlash = await genAI.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                });
+                
+                return `🤖 *KI-Analyse zum Spiel (Flash-Modell):*\n\n${responseFlash.response.text()}`;
+                
+            } catch (flashError) {
+                // 3. If "flash" also fails, send the user-facing error
+                console.error("Fehler bei der AI-Zusammenfassung (Flash-Fallback):", flashError);
+                return "🤖 *KI-Analyse zum Spiel:*\n\nDas KI-Modell ist derzeit überlastet. Zur Zeit ist leider keine Analyse möglich.";
+            }
+        }
+        
+        // 4. If it was a different error (not 503), send the user-facing error
+        console.error("Fehler bei der AI-Zusammenfassung (Pro-Modell):", error);
+        return "🤖 *KI-Analyse zum Spiel:*\n\nDas KI-Modell ist derzeit überlastet. Zur Zeit ist leider keine Analyse möglich.";
     }
 }
 
