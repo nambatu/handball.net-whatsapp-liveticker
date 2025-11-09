@@ -637,7 +637,7 @@ async function processEvents(gameData, tickerState, chatId) {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
             
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-            await sendRecapMessage(chatId, true, eventWithScore); 
+            await sendRecapMessage(chatId, true, null);
             
             tickerState.recapIntervalId = setInterval(() => {
                 sendRecapMessage(chatId, false, null);
