@@ -276,7 +276,7 @@ async function beginActualPolling(chatId) {
     console.log(`[${chatId}] Aktiviere Polling (Modus: ${tickerState.mode}).`);
     tickerState.isPolling = true; 
     tickerState.isScheduled = false;
-    tickerState.recapMinuteCounter = 0;
+    tickerState.recapMinuteCounter = 0; // Reset/init counter
 
     const currentSchedule = loadScheduledTickers(scheduleFilePath);
     if (currentSchedule[chatId]) {
@@ -289,7 +289,7 @@ async function beginActualPolling(chatId) {
         try {
             let legendMessage = "ℹ️ *Ticker-Legende:*\n";
             for (const key in EVENT_MAP) {
-                if (key === "default" || key === "StartPeriod" || key === "StopPeriod") continue;
+                if (key === "default" || key === "StartPeriod" || key === "StopPeriod" || key === "StartGame") continue;
                 const eventDetails = EVENT_MAP[key]; 
                 legendMessage += `${eventDetails.emoji} = ${eventDetails.label}\n`;
             }
@@ -300,13 +300,7 @@ async function beginActualPolling(chatId) {
         }
     }
     
-    if (tickerState.mode === 'recap') {
-        if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-        tickerState.recapIntervalId = setInterval(() => {
-            sendRecapMessage(chatId, false, null);
-        }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
-        console.log(`[${chatId}] Recap-Timer gestartet (${RECAP_INTERVAL_MINUTES} min).`);
-    }
+    // NO MORE setInterval - Recaps are now event-driven.
 
     if (!jobQueue.some(job => job.chatId === chatId && job.type === 'poll')) {
         jobQueue.unshift({
@@ -320,106 +314,50 @@ async function beginActualPolling(chatId) {
 }
 
 /**
- * Sends a recap message.
+ * Sends a recap message for a specific time window.
  */
-async function sendRecapMessage(chatId, isCritical = false, event = null) {
+async function sendRecapMessage(chatId, startMin, endMin) {
     const tickerState = activeTickers.get(chatId);
-    
-    // Safety check
-    if (!tickerState || !tickerState.isPolling) {
-        return;
-    }
+    if (!tickerState || !tickerState.isPolling) return;
 
+    const timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
+    
     const allEventsInBuffer = [...tickerState.recapEvents];
-    
-    // Always clear the buffer, as we will re-populate 'eventsToKeep'
-    tickerState.recapEvents = []; 
-
-    if (allEventsInBuffer.length === 0) {
-        if (!isCritical) { // Don't log for criticals, as they might fire before events are buffered
-            console.log(`[${chatId}] Kein Event für Recap gefunden. Überspringe.`);
-        }
-        return;
-    }
-
-    const startMin = tickerState.recapMinuteCounter || 0;
-    let endMin;
-    let timeRangeTitle;
-
-    // --- FIX 1: Correctly determine the end minute and title ---
-    if (isCritical) {
-        // For critical events (Halbzeit/Spielende), the end minute IS the event time.
-        endMin = event && event.time ? parseInt(event.time.split(':')[0], 10) : startMin;
-        endMin = Math.max(endMin, startMin); // Ensure endMin is not in the past
-    } else {
-        // For regular 5-minute recaps
-        endMin = startMin + RECAP_INTERVAL_MINUTES;
-    }
-    
-    timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
-    // --- END FIX 1 ---
-
-
-    // --- FIX 2: Partition events: send THIS window, keep ALL others (past or future) ---
     const eventsToSend = [];
-    const lateEventsToSend = []; // Events that arrived late
+    const eventsToKeep = []; // Events for the next interval
 
+    // --- NEW FILTERING LOGIC ---
     for (const ev of allEventsInBuffer) {
         const evMin = ev.time ? parseInt(ev.time.split(':')[0], 10) : -1;
 
-        if (evMin === -1) { // Failsafe for events without a time
+        if (evMin === -1) { // Failsafe for events without time
             continue; // Discard events with no timestamp
         }
 
-        // --- NEW: CATCH LATE EVENTS ---
-        // If an event is from BEFORE the start of this window, send it now.
-        if (evMin < startMin) {
-            lateEventsToSend.push(ev);
-            continue; 
+        // Send events that are IN this window
+        if (evMin >= startMin && evMin < endMin) {
+            eventsToSend.push(ev);
+        } 
+        // Keep events that are for FUTURE windows
+        else if (evMin >= endMin) {
+            eventsToKeep.push(ev);
         }
-        // --- END NEW ---
-
-        if (isCritical) {
-            // Send all events from startMin up to AND INCLUDING endMin
-            if (evMin >= startMin && evMin <= endMin) {
-                eventsToSend.push(ev);
-            } else {
-                // Keep only FUTURE events
-                tickerState.recapEvents.push(ev); 
-            }
-        } else {
-            // Send all events from startMin up to (but NOT including) endMin
-            if (evMin >= startMin && evMin < endMin) {
-                eventsToSend.push(ev);
-            } else {
-                // Keep only FUTURE events
-                tickerState.recapEvents.push(ev); 
-            }
-        }
+        // Discard late events from *previous* windows (they were already sent)
     }
-    // --- END FIX 2 ---
-    
-    // Update the counter *after* processing
-    tickerState.recapMinuteCounter = endMin; 
 
-    // Combine the late events with the current window's events
-    const allEventsToSend = [...lateEventsToSend, ...eventsToSend];
+    // Update the buffer with only the future events
+    tickerState.recapEvents = eventsToKeep;
+    // --- END NEW LOGIC ---
 
-    if (allEventsToSend.length === 0) {
+    if (eventsToSend.length === 0) {
         console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden. Überspringe.`);
-        // If it was a regular timer, roll back the counter
-        if (!isCritical) {
-            tickerState.recapMinuteCounter = startMin;
-        }
         return; 
     }
 
-    console.log(`[${chatId}] Sende ${allEventsToSend.length} Events für Recap ${timeRangeTitle} (davon ${lateEventsToSend.length} verspätet).`);
+    console.log(`[${chatId}] Sende ${eventsToSend.length} Events für Recap ${timeRangeTitle}.`);
 
-    allEventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
-    const recapLines = allEventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
-    
-    // Filter out any blank lines (like from 'StartGame')
+    eventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
+    const recapLines = eventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
     if (validLines.length === 0) {
@@ -430,21 +368,14 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
     const teamHeader = `*${tickerState.teamNames.home}* : *${tickerState.teamNames.guest}*`;
     const recapBody = validLines.join('\n'); 
     
-    // Add a header if there were late events
-    let lateEventHeader = "";
-    if (lateEventsToSend.length > 0) {
-        lateEventHeader = "*(Nachtrag vergangener Minuten)*\n";
-    }
-    
-    const finalMessage = `📬 *${timeRangeTitle}*\n\n${teamHeader}\n${lateEventHeader}${recapBody}`;
+    const finalMessage = `📬 *${timeRangeTitle}*\n\n${teamHeader}\n${recapBody}`;
 
     try {
         await client.sendMessage(chatId, finalMessage);
     } catch (error) {
         console.error(`[${chatId}] Fehler beim Senden der Recap-Nachricht:`, error);
         // If sending failed, put the events back in the buffer to try again
-        tickerState.recapEvents.unshift(...allEventsToSend);
-        tickerState.recapMinuteCounter = startMin; // Roll back counter
+        tickerState.recapEvents.unshift(...eventsToSend);
     }
 }
 
@@ -649,36 +580,29 @@ async function processEvents(gameData, tickerState, chatId) {
             }
         }
         else if (tickerState.mode === 'recap') {
-            const ignoredEvents = [];
+            // Add event to buffer
+            const ignoredEvents = ["StartGame"];
             if (!ignoredEvents.includes(ev.type)) {
-                
+                // (Your existing, correct logic for formatting detailStr)
                 const lineup = gameData ? gameData.lineup : null;
                 const team = ev.team ? ev.team.toLowerCase() : null; 
                 const teamName = ev.team === 'Home' ? tickerState.teamNames.home : tickerState.teamNames.guest;
-
                 let detailStr = ""; 
                 const numMatch = ev.message.match(/(\d+)\./);
                 const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
                 let playerName = null;
-
                 if (playerNumber && team && lineup && lineup[team]) {
                     const player = lineup[team].find(p => p.number === playerNumber);
                     if (player) {
                         playerName = abbreviatePlayerName(player.firstname, player.lastname); 
                     }
                 }
-
                 switch (ev.type) {
-                    case "Goal":
-                    case "SevenMeterGoal":
+                    case "Goal": case "SevenMeterGoal":
                         if (playerName) detailStr = `${playerName}`;
                         else if (playerNumber) detailStr = `Nr. ${playerNumber}`;
                         break;
-                    case "SevenMeterMissed":
-                    case "TwoMinutePenalty":
-                    case "Warning":
-                    case "Disqualification":
-                    case "DisqualificationWithReport":
+                    case "SevenMeterMissed": case "TwoMinutePenalty": case "Warning": case "Disqualification": case "DisqualificationWithReport":
                         if (playerName) detailStr = `${playerName} (*${teamName}*)`;
                         else if (playerNumber) detailStr = `Nr. ${playerNumber} (*${teamName}*)`;
                         else detailStr = `*${teamName}*`;
@@ -694,38 +618,60 @@ async function processEvents(gameData, tickerState, chatId) {
                          if (minute > 30) detailStr = `Spielende`;
                          else detailStr = `Halbzeit`;
                         break;
-                    default:
-                        detailStr = ""; 
+                    default: detailStr = ""; 
                 }
-                
                 console.log(`[${chatId}] Speichere Event-Objekt für Recap (ID: ${ev.id}, Typ: ${ev.type})`);
                 tickerState.recapEvents.push({ ...eventWithScore, preformattedDetail: detailStr });
             }
         }
         
-        const isCriticalEvent = (ev.type === "StopPeriod" || ev.type === "StartPeriod");
-        if (isCriticalEvent && tickerState.mode === 'recap') {
-            console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
+        // --- NEW EVENT-DRIVEN RECAP TRIGGER ---
+        if (tickerState.mode === 'recap') {
+            const evMin = ev.time ? parseInt(ev.time.split(':')[0], 10) : -1;
             
-            if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-                await sendRecapMessage(chatId, true, eventWithScore);            
-            tickerState.recapIntervalId = setInterval(() => {
-                sendRecapMessage(chatId, false, null);
-            }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
+            if (evMin > -1) {
+                let currentWindowStart = tickerState.recapMinuteCounter || 0;
+                let recapWindowEnd = currentWindowStart + RECAP_INTERVAL_MINUTES;
+
+                // Check if this event (or a StopPeriod) has crossed the window boundary
+                while (evMin >= recapWindowEnd || (ev.type === "StopPeriod" && evMin > currentWindowStart)) {
+                    
+                    let effectiveEndMin = recapWindowEnd;
+                    
+                    // If it's a critical stop, the window ends AT the event time.
+                    if (ev.type === "StopPeriod") {
+                        effectiveEndMin = evMin;
+                    }
+
+                    console.log(`[${chatId}] Event (${ev.type} @ ${evMin}min) löst Recap-Sendung für ${currentWindowStart}-${effectiveEndMin}min aus.`);
+                    await sendRecapMessage(chatId, currentWindowStart, effectiveEndMin);
+                    
+                    // Update the counter and check for the *next* window
+                    tickerState.recapMinuteCounter = effectiveEndMin;
+                    currentWindowStart = effectiveEndMin;
+                    recapWindowEnd = currentWindowStart + RECAP_INTERVAL_MINUTES;
+
+                    // If it was a critical stop, we are done with this event.
+                    if (ev.type === "StopPeriod") {
+                        break;
+                    }
+                }
+            }
         }
+        // --- END NEW TRIGGER ---
+
 
         if (ev.type === "StopPeriod") {
             const minute = ev.time ? parseInt(ev.time.split(':')[0], 10) : 0;
             if (minute > 30) { 
                 console.log(`[${chatId}] Spielende-Event empfangen. Ticker wird gestoppt.`);
                 tickerState.isPolling = false;
-                if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
+                // No more recapIntervalId to clear
 
                 const index = jobQueue.findIndex(job => job.chatId === chatId);
                 if (index > -1) jobQueue.splice(index, 1);
 
                 try {
-                    // --- FIX: Pass the 'events' array to extractGameStats ---
                     const statsMessage = await extractGameStats(gameData.lineup, tickerState.teamNames, events);
                     setTimeout(async () => {
                          try { await client.sendMessage(chatId, statsMessage); }
@@ -749,6 +695,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     catch (e) { console.error(`[${chatId}] Fehler beim Senden der Abschlussnachricht: `, e); }
                 }, 4000); 
 
+                // SCHEDULE CLEANUP & AUTO-SCHEDULE HOOK
                 setTimeout(async () => {
                     if (activeTickers.has(chatId)) {
                         activeTickers.delete(chatId);
@@ -764,7 +711,7 @@ async function processEvents(gameData, tickerState, chatId) {
                                 chatId, 
                                 tickerState.groupName, 
                                 tickerState.mode,
-                                tickerState.gameId 
+                                tickerState.gameId // Pass the finished game ID
                             );
                             
                             if (nextGame) {
@@ -779,7 +726,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     }
                     
                 }, 30000); 
-                break;
+                break; 
             }
         }
     }
