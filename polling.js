@@ -67,67 +67,109 @@ function buildDataUrl(gameId) {
 }
 
 /**
- * NEW (FIXED): Fetches and extracts the schedule JSON from a team's spielplan page.
- * This version correctly finds the right script tag and parses the Next.js hydration script.
+ * REVISED (FINAL): Fetches and extracts the schedule JSON from a team's spielplan page.
+ * This version uses the proven logic from our debug.js script.
  * @param {string} teamPageUrl - The URL of the team's schedule page.
  * @returns {Array|null} - An array of game objects, or null if not found.
  */
 async function getSpielplanData(teamPageUrl) {
     let html = "";
     try {
-        const response = await axios.get(teamPageUrl, { timeout: 10000 });
+        console.log(`AutoSchedule: Rufe Team-URL ab: ${teamPageUrl}`);
+        const response = await axios.get(teamPageUrl, { 
+            timeout: 10000,
+            // Add a User-Agent to mimic a browser, this is important
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
         html = response.data;
+        console.log("AutoSchedule: HTML-Antwort empfangen.");
 
         // 1. Find ALL Next.js script blobs
-        const scriptRegex = /<script>self\.__next_f\.push\(\[1,"(.*?)"]\)</sg; // 'g' flag for global
+        const scriptRegex = /<script>self\.__next_f\.push\(\[1,"(.*?)"]\)</sg;
         const scriptMatches = html.matchAll(scriptRegex);
 
-        let dataString = "";
+        let scheduleArrayString = "";
+        let scriptTagsFound = 0;
+        let scheduleScriptTagIndex = -1;
 
         // 2. Iterate through all matches to find the one with the schedule
         for (const match of scriptMatches) {
+            scriptTagsFound++;
             const potentialDataString = match[1];
-            
-            // 3. Check if this chunk contains the schedule data
-            if (potentialDataString && potentialDataString.includes('"schedule":')) {
-                // 4. Unescape this specific chunk
-                dataString = potentialDataString
-                    .replace(/\\"/g, '"')  // Unescape quotes
-                    .replace(/\\\\/g, '\\'); // Unescape backslashes
-                break; // We found the right chunk
+
+            // 3. Unescape this chunk first
+            const dataString = potentialDataString
+                .replace(/\\"/g, '"')  // Unescape quotes
+                .replace(/\\\\/g, '\\'); // Unescape backslashes
+
+            // 4. Check if the *unescaped* string has our key
+            if (dataString && dataString.includes('"schedule":[')) {
+                scheduleScriptTagIndex = scriptTagsFound;
+                
+                // 5. Find the start of the schedule array
+                const scheduleKey = '"schedule":[';
+                const scheduleStartIndex = dataString.indexOf(scheduleKey);
+                
+                // 6. Find the end by matching brackets
+                const scheduleJson = dataString.substring(scheduleStartIndex + scheduleKey.length - 1); 
+                let bracketCount = 0;
+                let scheduleEndIndex = -1;
+                let inString = false;
+
+                for (let i = 0; i < scheduleJson.length; i++) {
+                    const char = scheduleJson[i];
+                    
+                    if (char === '"' && (i === 0 || scheduleJson[i-1] !== '\\')) {
+                        inString = !inString;
+                    }
+                    if (inString) continue;
+                    if (char === '[') {
+                        bracketCount++;
+                    } else if (char === ']') {
+                        bracketCount--;
+                    }
+                    if (bracketCount === 0) {
+                        scheduleEndIndex = i;
+                        break;
+                    }
+                }
+
+                if (scheduleEndIndex !== -1) {
+                    scheduleArrayString = scheduleJson.substring(0, scheduleEndIndex + 1);
+                    break; // Found it!
+                } else {
+                     console.error("AutoSchedule: 'schedule' gefunden, aber schließende Klammer ']' fehlt.");
+                }
             }
         }
 
-        if (!dataString) {
-            console.error(`AutoSchedule: Konnte keinen script-Tag mit '"schedule":' finden.`);
+        console.log(`AutoSchedule: ${scriptTagsFound} script tags durchsucht. 'schedule' in Tag #${scheduleScriptTagIndex} gefunden.`);
+
+        if (!scheduleArrayString) {
+            console.error("AutoSchedule: Konnte 'schedule' JSON in keinem script-Tag finden.");
             return null;
         }
 
-        // 5. Now, run the regex on the *clean* data string
-        // This regex looks for the schedule array and stops at the next key
-        const scheduleRegex = /"schedule":(\[.*?\]),("lastUpdated"|",")/s;
-        const scheduleMatch = dataString.match(scheduleRegex);
-
-        if (scheduleMatch && scheduleMatch[1]) {
-            try {
-                // 6. Parse the clean JSON
-                const scheduleData = JSON.parse(scheduleMatch[1]);
-                return scheduleData;
-            } catch (e) {
-                console.error(`AutoSchedule: Gefundenes JSON war fehlerhaft:`, e.message);
-                console.error("JSON Snippet:", scheduleMatch[1].substring(0, 200));
-                return null;
-            }
+        // 7. Parse it
+        try {
+            const scheduleData = JSON.parse(scheduleArrayString);
+            console.log(`AutoSchedule: JSON erfolgreich geparst. ${scheduleData.length} Spiele gefunden.`);
+            return scheduleData;
+        } catch (e) {
+            console.error(`AutoSchedule: Gefundenes JSON war fehlerhaft:`, e.message);
+            console.error("JSON Snippet (first 200 chars):", scheduleArrayString.substring(0, 200));
+            return null;
         }
-
-        // This log will replace your original error
-        console.error("AutoSchedule: Konnte 'schedule' JSON in der HTML-Antwort nicht finden.");
-        return null;
         
     } catch (error) {
-        console.error(`AutoSchedule: Fehler beim Abrufen der Spielplan-Daten:`, error.message);
+        console.error(`AutoSchedule: Kritischer Fehler beim Abrufen der Spielplan-Daten:`, error.message);
+        if (error.response) {
+            console.error(`AutoSchedule: HTTP Status ${error.response.status}`);
+        }
         if (html) {
-             console.error("HTML Snippet (first 500 chars):", html.substring(0, 500));
+             console.error("AutoSchedule: HTML Snippet (first 500 chars):", html.substring(0, 500));
         }
         throw new Error("Spielplan-Daten konnten nicht abgerufen werden.");
     }
