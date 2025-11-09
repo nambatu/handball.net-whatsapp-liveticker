@@ -220,15 +220,18 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, is
  * Main function for the !autoschedule command.
  * This function now correctly finds the next game from the parsed JSON.
  */
-async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
+async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode, finishedGameId = null) {
     const games = await getSpielplanData(teamPageUrl);
     if (!games || games.length === 0) {
         throw new Error("Konnte keine Spiele auf der Team-Seite finden.");
     }
 
-    // Find the first game that is marked as "Pre" (not yet played)
-    // We also check for a valid 'startsAt' timestamp
-    const nextGame = games.find(game => game.state === 'Pre' && game.startsAt);
+    // Find the first game that is "Pre" AND does NOT match the ID of the game we just finished
+    const nextGame = games.find(game => 
+        game.state === 'Pre' && 
+        game.startsAt &&
+        game.id !== finishedGameId // <-- This is the new, crucial check
+    );
 
     if (nextGame) {
         // Construct the game URL from the game ID
@@ -679,7 +682,6 @@ async function processEvents(gameData, tickerState, chatId) {
                     catch (e) { console.error(`[${chatId}] Fehler beim Senden der Abschlussnachricht: `, e); }
                 }, 4000); 
 
-                // SCHEDULE CLEANUP & AUTO-SCHEDULE HOOK
                 setTimeout(async () => {
                     if (activeTickers.has(chatId)) {
                         activeTickers.delete(chatId);
@@ -690,7 +692,14 @@ async function processEvents(gameData, tickerState, chatId) {
                     if (tickerState.isAutoSchedule) {
                         console.log(`[${chatId}] Auto-Schedule: Suche nach dem nächsten Spiel...`);
                         try {
-                            const nextGame = await autoScheduleNextGame(tickerState.teamPageUrl, chatId, tickerState.groupName, tickerState.mode);
+                            const nextGame = await autoScheduleNextGame(
+                                tickerState.teamPageUrl, 
+                                chatId, 
+                                tickerState.groupName, 
+                                tickerState.mode,
+                                tickerState.gameId 
+                            );
+                            
                             if (nextGame) {
                                 await client.sendMessage(chatId, `🤖 Auto-Schedule: Das nächste Spiel wurde gefunden und geplant:\n\n*${nextGame.homeTeam.name}* vs *${nextGame.awayTeam.name}*\nam ${new Date(nextGame.startsAt).toLocaleDateString('de-DE', {weekday: 'short', day: '2-digit', month: '2-digit'})} um ${new Date(nextGame.startsAt).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'})} Uhr.`);
                             } else {
@@ -703,7 +712,7 @@ async function processEvents(gameData, tickerState, chatId) {
                     }
                     
                 }, 30000); 
-                break; 
+                break;
             }
         }
     }
