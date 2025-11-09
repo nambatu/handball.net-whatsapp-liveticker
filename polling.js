@@ -330,6 +330,18 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
         return;
     }
 
+    const allEventsInBuffer = [...tickerState.recapEvents];
+    
+    // Always clear the buffer, as we will re-populate 'eventsToKeep'
+    tickerState.recapEvents = []; 
+
+    if (allEventsInBuffer.length === 0) {
+        if (!isCritical) { // Don't log for criticals, as they might fire before events are buffered
+            console.log(`[${chatId}] Kein Event für Recap gefunden. Überspringe.`);
+        }
+        return;
+    }
+
     const startMin = tickerState.recapMinuteCounter || 0;
     let endMin;
     let timeRangeTitle;
@@ -338,45 +350,62 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
     if (isCritical) {
         // For critical events (Halbzeit/Spielende), the end minute IS the event time.
         endMin = event && event.time ? parseInt(event.time.split(':')[0], 10) : startMin;
-        // Ensure endMin is not in the past (e.g., if multiple criticals fire at 30:00)
-        endMin = Math.max(endMin, startMin);
-        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
-        tickerState.recapMinuteCounter = endMin; // Update counter
+        endMin = Math.max(endMin, startMin); // Ensure endMin is not in the past
     } else {
         // For regular 5-minute recaps
         endMin = startMin + RECAP_INTERVAL_MINUTES;
-        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
-        tickerState.recapMinuteCounter = endMin; // Update counter
     }
+    
+    timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
     // --- END FIX 1 ---
 
 
-    // --- FIX 2: Filter events to ONLY include those in the time window ---
-    const allEventsInBuffer = [...tickerState.recapEvents];
-    const eventsToSend = allEventsInBuffer.filter(ev => {
-        if (!ev.time) return false;
-        const evMin = parseInt(ev.time.split(':')[0], 10);
-        
-        if (isCritical) {
-            // Include all events from startMin up to AND INCLUDING endMin
-            return evMin >= startMin && evMin <= endMin;
-        } else {
-            // Include all events from startMin up to (but NOT including) endMin
-            return evMin >= startMin && evMin < endMin;
+    // --- FIX 2: Partition events: send THIS window, keep ALL others (past or future) ---
+    const eventsToSend = [];
+    const lateEventsToSend = []; // Events that arrived late
+
+    for (const ev of allEventsInBuffer) {
+        const evMin = ev.time ? parseInt(ev.time.split(':')[0], 10) : -1;
+
+        if (evMin === -1) { // Failsafe for events without a time
+            continue; // Discard events with no timestamp
         }
-    });
 
-    // Remove the sent events from the main buffer
-    tickerState.recapEvents = allEventsInBuffer.filter(ev => {
-        if (!ev.time) return true; // Keep events without time? (safer)
-        const evMin = parseInt(ev.time.split(':')[0], 10);
-        // Keep events that are AFTER this window
-        return evMin >= endMin;
-    });
+        // --- NEW: CATCH LATE EVENTS ---
+        // If an event is from BEFORE the start of this window, send it now.
+        if (evMin < startMin) {
+            lateEventsToSend.push(ev);
+            continue; 
+        }
+        // --- END NEW ---
+
+        if (isCritical) {
+            // Send all events from startMin up to AND INCLUDING endMin
+            if (evMin >= startMin && evMin <= endMin) {
+                eventsToSend.push(ev);
+            } else {
+                // Keep only FUTURE events
+                tickerState.recapEvents.push(ev); 
+            }
+        } else {
+            // Send all events from startMin up to (but NOT including) endMin
+            if (evMin >= startMin && evMin < endMin) {
+                eventsToSend.push(ev);
+            } else {
+                // Keep only FUTURE events
+                tickerState.recapEvents.push(ev); 
+            }
+        }
+    }
     // --- END FIX 2 ---
+    
+    // Update the counter *after* processing
+    tickerState.recapMinuteCounter = endMin; 
 
+    // Combine the late events with the current window's events
+    const allEventsToSend = [...lateEventsToSend, ...eventsToSend];
 
-    if (eventsToSend.length === 0) {
+    if (allEventsToSend.length === 0) {
         console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden. Überspringe.`);
         // If it was a regular timer, roll back the counter
         if (!isCritical) {
@@ -385,10 +414,10 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
         return; 
     }
 
-    console.log(`[${chatId}] Sende ${eventsToSend.length} Events für Recap ${timeRangeTitle}.`);
+    console.log(`[${chatId}] Sende ${allEventsToSend.length} Events für Recap ${timeRangeTitle} (davon ${lateEventsToSend.length} verspätet).`);
 
-    eventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
-    const recapLines = eventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
+    allEventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
+    const recapLines = allEventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
     
     // Filter out any blank lines (like from 'StartGame')
     const validLines = recapLines.filter(line => line && line.trim() !== '');
@@ -400,14 +429,21 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
 
     const teamHeader = `*${tickerState.teamNames.home}* : *${tickerState.teamNames.guest}*`;
     const recapBody = validLines.join('\n'); 
-    const finalMessage = `📬 *${timeRangeTitle}*\n\n${teamHeader}\n${recapBody}`;
+    
+    // Add a header if there were late events
+    let lateEventHeader = "";
+    if (lateEventsToSend.length > 0) {
+        lateEventHeader = "*(Nachtrag vergangener Minuten)*\n";
+    }
+    
+    const finalMessage = `📬 *${timeRangeTitle}*\n\n${teamHeader}\n${lateEventHeader}${recapBody}`;
 
     try {
         await client.sendMessage(chatId, finalMessage);
     } catch (error) {
         console.error(`[${chatId}] Fehler beim Senden der Recap-Nachricht:`, error);
         // If sending failed, put the events back in the buffer to try again
-        tickerState.recapEvents.unshift(...eventsToSend);
+        tickerState.recapEvents.unshift(...allEventsToSend);
         tickerState.recapMinuteCounter = startMin; // Roll back counter
     }
 }
