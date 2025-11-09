@@ -68,48 +68,57 @@ function buildDataUrl(gameId) {
 
 /**
  * NEW: Fetches and extracts the schedule JSON from a team's spielplan page.
+ * This version correctly parses the Next.js hydration script.
  * @param {string} teamPageUrl - The URL of the team's schedule page.
  * @returns {Array|null} - An array of game objects, or null if not found.
  */
 async function getSpielplanData(teamPageUrl) {
+    let html = "";
     try {
-        // We fetch the main Document URL, no extra parameters needed.
         const response = await axios.get(teamPageUrl, { timeout: 10000 });
-        const html = response.data;
+        html = response.data;
 
-        // --- FIX: Added 's' flag for multi-line matching ---
-        const regex = /"schedule":(\[.*?\]),"lastUpdated":/s;
-        const match = html.match(regex);
+        // 1. Find the Next.js script blob that contains the schedule
+        const scriptRegex = /<script>self\.__next_f\.push\(\[1,"(.*?)"]\)</s;
+        const scriptMatch = html.match(scriptRegex);
 
-        if (match && match[1]) {
+        let dataString = "";
+
+        if (scriptMatch && scriptMatch[1]) {
+            // 2. Extract and unescape the "double-escaped" string
+            dataString = scriptMatch[1]
+                .replace(/\\"/g, '"')  // Unescape quotes
+                .replace(/\\\\/g, '\\'); // Unescape backslashes
+        } else {
+            // Fallback: if the page structure changes, search the whole document
+            // This is less reliable but better than nothing
+            dataString = html;
+        }
+
+        // 3. Now, run the regex on the *clean* data string
+        const scheduleRegex = /"schedule":(\[.*?\]),("lastUpdated"|",")/s;
+        const scheduleMatch = dataString.match(scheduleRegex);
+
+        if (scheduleMatch && scheduleMatch[1]) {
             try {
-                // The match is a JSON string. Parse it.
-                const scheduleData = JSON.parse(match[1]);
+                // 4. Parse the clean JSON
+                const scheduleData = JSON.parse(scheduleMatch[1]);
                 return scheduleData;
             } catch (e) {
-                console.error("AutoSchedule: Gefundenes JSON war fehlerhaft:", e.message);
-                return null;
-            }
-        }
-        
-        // Fallback regex (if "lastUpdated" isn't next)
-        const regexFallback = /"schedule":(\[.*?\]),"/s;
-        const matchFallback = html.match(regexFallback);
-        if (matchFallback && matchFallback[1]) {
-             try {
-                const scheduleData = JSON.parse(matchFallback[1]);
-                return scheduleData;
-            } catch (e) {
-                console.error("AutoSchedule (Fallback): Gefundenes JSON war fehlerhaft:", e.message);
+                console.error(`AutoSchedule: Gefundenes JSON war fehlerhaft (ChatID: ${chatId}):`, e.message);
                 return null;
             }
         }
 
-        console.error("Konnte 'schedule' JSON in der HTML-Antwort nicht finden.");
+        console.error(`AutoSchedule: Konnte 'schedule' JSON in der HTML-Antwort nicht finden.`);
         return null;
         
     } catch (error) {
-        console.error("Fehler beim Abrufen der Spielplan-Daten:", error.message);
+        console.error(`AutoSchedule: Fehler beim Abrufen der Spielplan-Daten:`, error.message);
+        // Log a snippet of the HTML for debugging if it's a parsing error
+        if (html) {
+             console.error("HTML Snippet (first 500 chars):", html.substring(0, 500));
+        }
         throw new Error("Spielplan-Daten konnten nicht abgerufen werden.");
     }
 }
@@ -157,6 +166,7 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, is
 
 /**
  * NEW: Main function for the !autoschedule command.
+ * This function now correctly finds the next game from the parsed JSON.
  */
 async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
     const games = await getSpielplanData(teamPageUrl);
@@ -164,15 +174,26 @@ async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
         throw new Error("Konnte keine Spiele auf der Team-Seite finden.");
     }
 
+    // Find the first game that is marked as "Pre" (not yet played)
     const nextGame = games.find(game => game.state === 'Pre');
 
     if (nextGame) {
+        // Construct the game URL from the game ID
         const gameUrl = `https://www.handball.net/spiele/${nextGame.id}`;
+        
+        // Queue the 'schedule' job. This will fetch the full game data (like team names).
         await queueTickerScheduling(gameUrl, chatId, groupName, mode, true, teamPageUrl);
-        return nextGame; 
+        
+        // Return the game info so app.js can send a confirmation message
+        return {
+            id: nextGame.id,
+            startsAt: nextGame.startsAt, // This is a timestamp
+            homeTeam: nextGame.homeTeam, // This is an object e.g., { name: "Team A" }
+            awayTeam: nextGame.awayTeam  // This is an object e.g., { name: "Team B" }
+        };
     }
     
-    return null; 
+    return null; // No future games found
 }
 
 
@@ -388,6 +409,8 @@ async function runWorker(job) {
                 console.log(`[${chatId}] Planungs-Job erfolgreich...`);
                 const modeDescriptionScheduled = (tickerState.mode === 'recap') ? `im Recap-Modus (${RECAP_INTERVAL_MINUTES}-Minuten-Zusammenfassungen)` : "mit Live-Updates";
                 
+                // Only send a schedule confirmation if it's NOT an auto-schedule loop
+                // The auto-schedule loop confirmation is sent from app.js
                 if (!tickerState.isAutoSchedule) {
                     await client.sendMessage(chatId, `✅ Ticker für *${teamNames.home}* vs *${teamNames.guest}* ist geplant (${modeDescriptionScheduled}) und startet automatisch am ${startDateLocale} um ca. ${startTimeLocale} Uhr.`);                
                 }
@@ -446,7 +469,12 @@ async function runWorker(job) {
     } catch (error) {
         console.error(`[${chatId}] Fehler im Worker-Job ${jobId} (${type}):`, error.message);
         if (type === 'schedule') {
-             await client.sendMessage(chatId, 'Fehler: Die initiale Planung des Tickers ist fehlgeschlagen. Bitte versuchen Sie es erneut.');
+             // Don't send error if it was an auto-schedule, just log it
+             if (!tickerState.isAutoSchedule) {
+                await client.sendMessage(chatId, 'Fehler: Die initiale Planung des Tickers ist fehlgeschlagen. Bitte versuchen Sie es erneut.');
+             } else {
+                console.error(`[${chatId}] Auto-Schedule Planungs-Job fehlgeschlagen.`);
+             }
              activeTickers.delete(chatId);
              const currentSchedule = loadScheduledTickers(scheduleFilePath);
              if (currentSchedule[chatId]) {
