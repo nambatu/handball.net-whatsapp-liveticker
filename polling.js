@@ -325,45 +325,76 @@ async function beginActualPolling(chatId) {
 async function sendRecapMessage(chatId, isCritical = false, event = null) {
     const tickerState = activeTickers.get(chatId);
     
-    if (!tickerState || !tickerState.isPolling || (tickerState.recapEvents.length === 0 && !isCritical)) {
-        if (!isCritical) {
-            console.log(`[${chatId}] Kein Event für Recap gefunden. Überspringe.`);
-            return; 
-        }
+    // Safety check
+    if (!tickerState || !tickerState.isPolling) {
+        return;
     }
 
-    let timeRangeTitle;
     const startMin = tickerState.recapMinuteCounter || 0;
+    let endMin;
+    let timeRangeTitle;
 
+    // --- FIX 1: Correctly determine the end minute and title ---
     if (isCritical) {
-        const currentMinute = event ? parseInt(event.time.split(':')[0], 10) : startMin;
-        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(currentMinute).padStart(2, '0')}`;
-        tickerState.recapMinuteCounter = currentMinute;
-    } else {
-        const endMin = startMin + RECAP_INTERVAL_MINUTES;
+        // For critical events (Halbzeit/Spielende), the end minute IS the event time.
+        endMin = event && event.time ? parseInt(event.time.split(':')[0], 10) : startMin;
+        // Ensure endMin is not in the past (e.g., if multiple criticals fire at 30:00)
+        endMin = Math.max(endMin, startMin);
         timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
-        tickerState.recapMinuteCounter = endMin;
+        tickerState.recapMinuteCounter = endMin; // Update counter
+    } else {
+        // For regular 5-minute recaps
+        endMin = startMin + RECAP_INTERVAL_MINUTES;
+        timeRangeTitle = `Minute ${String(startMin).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}`;
+        tickerState.recapMinuteCounter = endMin; // Update counter
     }
+    // --- END FIX 1 ---
 
-    const eventsToSend = [...tickerState.recapEvents];
-    if (isCritical && event) {
-        eventsToSend.push(event);
-    }
-    
+
+    // --- FIX 2: Filter events to ONLY include those in the time window ---
+    const allEventsInBuffer = [...tickerState.recapEvents];
+    const eventsToSend = allEventsInBuffer.filter(ev => {
+        if (!ev.time) return false;
+        const evMin = parseInt(ev.time.split(':')[0], 10);
+        
+        if (isCritical) {
+            // Include all events from startMin up to AND INCLUDING endMin
+            return evMin >= startMin && evMin <= endMin;
+        } else {
+            // Include all events from startMin up to (but NOT including) endMin
+            return evMin >= startMin && evMin < endMin;
+        }
+    });
+
+    // Remove the sent events from the main buffer
+    tickerState.recapEvents = allEventsInBuffer.filter(ev => {
+        if (!ev.time) return true; // Keep events without time? (safer)
+        const evMin = parseInt(ev.time.split(':')[0], 10);
+        // Keep events that are AFTER this window
+        return evMin >= endMin;
+    });
+    // --- END FIX 2 ---
+
+
     if (eventsToSend.length === 0) {
         console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden. Überspringe.`);
-        tickerState.recapEvents = []; // Clear buffer
-        return;
+        // If it was a regular timer, roll back the counter
+        if (!isCritical) {
+            tickerState.recapMinuteCounter = startMin;
+        }
+        return; 
     }
 
     console.log(`[${chatId}] Sende ${eventsToSend.length} Events für Recap ${timeRangeTitle}.`);
 
     eventsToSend.sort((a, b) => a.timestamp - b.timestamp); 
     const recapLines = eventsToSend.map(ev => formatRecapEventLine(ev, tickerState));
+    
+    // Filter out any blank lines (like from 'StartGame')
     const validLines = recapLines.filter(line => line && line.trim() !== '');
 
     if (validLines.length === 0) {
-        tickerState.recapEvents = []; 
+        console.log(`[${chatId}] Kein Event für Recap ${timeRangeTitle} gefunden (alle Events wurden herausgefiltert).`);
         return;
     }
 
@@ -373,10 +404,11 @@ async function sendRecapMessage(chatId, isCritical = false, event = null) {
 
     try {
         await client.sendMessage(chatId, finalMessage);
-        tickerState.recapEvents = []; 
     } catch (error) {
         console.error(`[${chatId}] Fehler beim Senden der Recap-Nachricht:`, error);
-        tickerState.recapEvents = []; 
+        // If sending failed, put the events back in the buffer to try again
+        tickerState.recapEvents.unshift(...eventsToSend);
+        tickerState.recapMinuteCounter = startMin; // Roll back counter
     }
 }
 
@@ -640,8 +672,7 @@ async function processEvents(gameData, tickerState, chatId) {
             console.log(`[${chatId}] Kritisches Event (${ev.type}) erkannt, sende Recap sofort und setze Timer zurück.`);
             
             if (tickerState.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-            await sendRecapMessage(chatId, true, null);
-            
+                await sendRecapMessage(chatId, true, eventWithScore);            
             tickerState.recapIntervalId = setInterval(() => {
                 sendRecapMessage(chatId, false, null);
             }, RECAP_INTERVAL_MINUTES * 60 * 1000); 
