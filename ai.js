@@ -255,7 +255,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
         console.log("Versuche AI-Zusammenfassung mit 'gemini-2.5-pro'...");
         const responsePro = await genAI.models.generateContent({
             model: "gemini-2.5-pro",
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            contents: prompt ,
         });
         
         return `🤖 *KI-Analyse zum Spiel:*\n\n${responsePro.response.text()}`;
@@ -269,7 +269,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
             try {
                 const responseFlash = await genAI.models.generateContent({
                     model: "gemini-2.5-flash",
-                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    contents: prompt,
                 });
                 
                 return `🤖 *KI-Analyse zum Spiel (Flash-Modell):*\n\n${responseFlash.response.text()}`;
