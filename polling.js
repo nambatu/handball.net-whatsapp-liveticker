@@ -67,8 +67,8 @@ function buildDataUrl(gameId) {
 }
 
 /**
- * NEW: Fetches and extracts the schedule JSON from a team's spielplan page.
- * This version correctly parses the Next.js hydration script.
+ * NEW (FIXED): Fetches and extracts the schedule JSON from a team's spielplan page.
+ * This version correctly finds the right script tag and parses the Next.js hydration script.
  * @param {string} teamPageUrl - The URL of the team's schedule page.
  * @returns {Array|null} - An array of game objects, or null if not found.
  */
@@ -78,44 +78,54 @@ async function getSpielplanData(teamPageUrl) {
         const response = await axios.get(teamPageUrl, { timeout: 10000 });
         html = response.data;
 
-        // 1. Find the Next.js script blob that contains the schedule
-        const scriptRegex = /<script>self\.__next_f\.push\(\[1,"(.*?)"]\)</s;
-        const scriptMatch = html.match(scriptRegex);
+        // 1. Find ALL Next.js script blobs
+        const scriptRegex = /<script>self\.__next_f\.push\(\[1,"(.*?)"]\)</sg; // 'g' flag for global
+        const scriptMatches = html.matchAll(scriptRegex);
 
         let dataString = "";
 
-        if (scriptMatch && scriptMatch[1]) {
-            // 2. Extract and unescape the "double-escaped" string
-            dataString = scriptMatch[1]
-                .replace(/\\"/g, '"')  // Unescape quotes
-                .replace(/\\\\/g, '\\'); // Unescape backslashes
-        } else {
-            // Fallback: if the page structure changes, search the whole document
-            // This is less reliable but better than nothing
-            dataString = html;
+        // 2. Iterate through all matches to find the one with the schedule
+        for (const match of scriptMatches) {
+            const potentialDataString = match[1];
+            
+            // 3. Check if this chunk contains the schedule data
+            if (potentialDataString && potentialDataString.includes('"schedule":')) {
+                // 4. Unescape this specific chunk
+                dataString = potentialDataString
+                    .replace(/\\"/g, '"')  // Unescape quotes
+                    .replace(/\\\\/g, '\\'); // Unescape backslashes
+                break; // We found the right chunk
+            }
         }
 
-        // 3. Now, run the regex on the *clean* data string
+        if (!dataString) {
+            console.error(`AutoSchedule: Konnte keinen script-Tag mit '"schedule":' finden.`);
+            return null;
+        }
+
+        // 5. Now, run the regex on the *clean* data string
+        // This regex looks for the schedule array and stops at the next key
         const scheduleRegex = /"schedule":(\[.*?\]),("lastUpdated"|",")/s;
         const scheduleMatch = dataString.match(scheduleRegex);
 
         if (scheduleMatch && scheduleMatch[1]) {
             try {
-                // 4. Parse the clean JSON
+                // 6. Parse the clean JSON
                 const scheduleData = JSON.parse(scheduleMatch[1]);
                 return scheduleData;
             } catch (e) {
-                console.error(`AutoSchedule: Gefundenes JSON war fehlerhaft (ChatID: ${chatId}):`, e.message);
+                console.error(`AutoSchedule: Gefundenes JSON war fehlerhaft:`, e.message);
+                console.error("JSON Snippet:", scheduleMatch[1].substring(0, 200));
                 return null;
             }
         }
 
-        console.error(`AutoSchedule: Konnte 'schedule' JSON in der HTML-Antwort nicht finden.`);
+        // This log will replace your original error
+        console.error("AutoSchedule: Konnte 'schedule' JSON in der HTML-Antwort nicht finden.");
         return null;
         
     } catch (error) {
         console.error(`AutoSchedule: Fehler beim Abrufen der Spielplan-Daten:`, error.message);
-        // Log a snippet of the HTML for debugging if it's a parsing error
         if (html) {
              console.error("HTML Snippet (first 500 chars):", html.substring(0, 500));
         }
@@ -165,7 +175,7 @@ async function queueTickerScheduling(meetingPageUrl, chatId, groupName, mode, is
 }
 
 /**
- * NEW: Main function for the !autoschedule command.
+ * Main function for the !autoschedule command.
  * This function now correctly finds the next game from the parsed JSON.
  */
 async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
@@ -175,7 +185,8 @@ async function autoScheduleNextGame(teamPageUrl, chatId, groupName, mode) {
     }
 
     // Find the first game that is marked as "Pre" (not yet played)
-    const nextGame = games.find(game => game.state === 'Pre');
+    // We also check for a valid 'startsAt' timestamp
+    const nextGame = games.find(game => game.state === 'Pre' && game.startsAt);
 
     if (nextGame) {
         // Construct the game URL from the game ID
