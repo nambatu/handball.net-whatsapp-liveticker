@@ -5,26 +5,66 @@ const { GoogleGenAI } = require("@google/genai");
 const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 /**
- * Helper function to find the top scorer(s) from a lineup array.
- * (This function is still useful and correct)
- * @param {Array} lineup - The lineup array (e.g., gameData.lineup.home).
+ * --- REWRITTEN to calculate top scorer from the EVENTS array ---
+ * @param {Array} lineup - The lineup array for this team (e.g., gameData.lineup.home).
+ * @param {Array} events - The *full* chronological list of game events.
+ * @param {string} teamSide - The team to check, either 'Home' or 'Away'.
  * @returns {string} - Formatted string of top scorer(s).
  */
-function findTopScorer(lineup) {
+function findTopScorer(lineup, events, teamSide) {
     if (!lineup || lineup.length === 0) return "Niemand";
+    if (!events || events.length === 0) return "Niemand";
 
+    const goalMap = new Map(); // <playerNumber, goalCount>
     let topScore = 0;
-    lineup.forEach(player => {
-        if (player.goals > topScore) {
-            topScore = player.goals;
+
+    // 1. Loop through all events and count goals for this team
+    for (const ev of events) {
+        // Only count goals for the specified team
+        if (ev.team !== teamSide) continue;
+        
+        if (ev.type === "Goal" || ev.type === "SevenMeterGoal") {
+            // Extract player number from message (e.g., "Tor durch 10." or "Tor (7m) durch 22.")
+            const numMatch = ev.message.match(/(\d+)\./); 
+            const playerNumber = numMatch ? parseInt(numMatch[1], 10) : null;
+
+            if (playerNumber) {
+                const newScore = (goalMap.get(playerNumber) || 0) + 1;
+                goalMap.set(playerNumber, newScore);
+                if (newScore > topScore) {
+                    topScore = newScore;
+                }
+            }
         }
-    });
+    }
 
     if (topScore === 0) return "Niemand";
 
-    const topScorers = lineup
-        .filter(player => player.goals === topScore)
-        .map(player => `${player.firstname} ${player.lastname}`);
+    // 2. Find all players who match the top score
+    const topScorerNumbers = [];
+    for (const [playerNumber, score] of goalMap.entries()) {
+        if (score === topScore) {
+            topScorerNumbers.push(playerNumber);
+        }
+    }
+    
+    // 3. Map numbers back to names using the lineup array
+    const topScorers = topScorerNumbers.map(number => {
+        const player = lineup.find(p => p.number === number);
+        if (player) {
+            // --- FIX: Use correct camelCase properties ---
+            const fName = player.firstName ? player.firstName.trim() : null;
+            const lName = player.lastName ? player.lastName.trim() : null;
+            
+            if (lName && fName && fName !== "N.N.") {
+                // Using full first name + last name for clarity in stats
+                return `${fName.split(' ')[0]} ${lName}`; 
+            }
+            if (lName && lName !== "N.N.") return lName;
+            if (fName && fName !== "N.N.") return fName;
+        }
+        return `Nr. ${number}`; // Fallback if player not in lineup
+    });
 
     return `${topScorers.join(' & ')} (${topScore} Tore)`;
 }
@@ -71,9 +111,9 @@ function getStatsForPrompt(lineupData, teamNames, events) {
     // --- END NEW ---
 
     return {
-        // We still get top scorer from lineupData, as that seems correct
-        homeTopScorer: findTopScorer(lineupData.home),
-        guestTopScorer: findTopScorer(lineupData.away),
+        // --- FIX: Pass events and team side to the new findTopScorer ---
+        homeTopScorer: findTopScorer(lineupData.home, events, 'Home'),
+        guestTopScorer: findTopScorer(lineupData.away, events, 'Away'),
         
         // All other stats are now from our reliable event count
         homePenalties: stats.home.penalties,
@@ -206,13 +246,11 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
     1.  Gib deiner Zusammenfassung eine kreative, reißerische Überschrift in Fett (z.B. *Herzschlagfinale in der Halle West!* oder *Eine Lehrstunde in Sachen Abwehrschlacht.*).
     2.  Verwende die Statistiken für spitze Kommentare. (z.B. "Mit ${gameStats.guestPenalties} Zeitstrafen hat sich Team Gast das Leben selbst schwer gemacht." oder "Am Ende hat die Kaltschnäuzigkeit vom 7-Meter-Punkt den Unterschied gemacht."). Verwende die Statistiken nur, wenn sie auch sinnvoll oder wichtig für das Spiel waren.
     3.  Sei kreativ, vermeide Standardfloskeln. Gib dem Kommentar Persönlichkeit! Vermeide Sachen aus den Daten zu interpretieren die nicht daraus zu erschließen sind, bleibe lieber bei den Fakten als eine "zu offensive Abwehr" zu erfinden. 
-    4.  Falls Julian Langschwert, Tiard Brinkmann und/oder Simon Goßmann gespielt hat, lobe ihn sarkastisch bis in den Himmel.
+    4.  Falls Julian Langschwert, Tiard Brinkmann oder Simon Goßmann gespielt hat, lobe ihn sarkastisch bis in den Himmel.
 
     Deine Zusammenfassung (nur Überschrift und Text, ohne "Zusammenfassung:"):`;
 
     try {
-        //const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-        //const result = await model.generateContent(prompt);
         const response = await genAI.models.generateContent({
             model: "gemini-2.5-pro",
             contents: prompt,
