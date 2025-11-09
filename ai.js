@@ -53,8 +53,8 @@ function findTopScorer(lineup, events, teamSide) {
         const player = lineup.find(p => p.number === number);
         if (player) {
             // --- FIX: Use correct camelCase properties ---
-            const fName = player.firstName ? player.firstName.trim() : null;
-            const lName = player.lastName ? player.lastName.trim() : null;
+            const fName = player.firstname ? player.firstname.trim() : null;
+            const lName = player.lastname ? player.lastname.trim() : null;
             
             if (lName && fName && fName !== "N.N.") {
                 // Using full first name + last name for clarity in stats
