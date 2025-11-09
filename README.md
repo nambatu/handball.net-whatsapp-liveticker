@@ -1,156 +1,169 @@
 # WhatsApp Live Ticker Bot (handball.net)
 
-This is a high-performance WhatsApp bot that provides real-time game updates from `handball.net` directly into your WhatsApp groups. It's perfect for keeping your team, friends, or family updated when they can't watch the game\!
+Das ist ein WhatsApp-Bot, der Live-Ticker-Daten von `handball.net` in Echtzeit in deine WhatsApp-Gruppe schickt. 
 
-This project is a complete migration from an older, `nuliga`-based bot. It replaces the slow, resource-heavy Puppeteer scraping with direct, high-speed JSON polling of the `handball.net` data API. This makes the bot significantly faster, lighter, and more reliable.
+## Features
 
-## ✨ Features
-
-  * **Dual Ticker Modes:**
-      * **Live Mode:** Sends a message for *every single event* as it happens.
-      * **Recap Mode:** Sends a 5-minute summary of all events (perfect for less "spammy" updates).
-  * **🤖 AI-Powered Summaries:** At the end of the game, a sarcastic AI commentator (powered by Google's Gemini) provides a witty, personalized summary of the match.
-  * **📊 Detailed Stats:** Posts a full breakdown of the final game stats, including top scorers, 7-meter stats, and all card penalties.
-  * **Smart Scheduling:** You can start the bot hours in advance. It automatically reads the game's official start time and begins polling a few minutes before the first whistle.
-  * **Persistent & Recoverable:** The bot saves all scheduled tickers and seen events. If you restart the bot, it will pick up right where it left off.
+  * **Zwei Ticker-Modi:**
+      * **Live-Modus:** Sendet *jedes* Ereignis (Tor, 7-Meter, Zeitstrafe) sofort als einzelne Nachricht.
+      * **Recap-Modus:** Schickt alle 5 Minuten eine Zusammenfassung der letzten Ereignisse (ideal für Chats, die nicht "zugespammt" werden sollen).
+  * **Auto-Schedule:** Plant automatisch das nächste anstehende Spiel einer Mannschaft. Sobald das Spiel vorbei ist, sucht der Bot das nächste Spiel der Saison und plant es von selbst.
+  * **KI-Zusammenfassung:** Nach dem Spiel schreibt ein sarkastischer KI-Kommentator (powered by Google Gemini) eine witzige, personalisierte Zusammenfassung des Spiels.
+  * **Detaillierte Statistiken:** Postet nach Abpfiff eine komplette Übersicht der Spielstatistiken, inklusive Torschützenkönigen, 7-Meter-Quoten und allen Strafen.
+  * **Clevere Zeitplanung:** Du kannst den Ticker schon Stunden vorher starten. Der Bot liest die offizielle Startzeit und legt von selbst ein paar Minuten vor Anpfiff los.
+  * **Dauerbetrieb:** Der Bot speichert alle geplanten Ticker und gesehenen Events. Wenn du den Bot neustartest, macht er genau da weiter, wo er aufgehört hat.
 
 -----
 
-## ⚙️ Setup Instructions
+Du willst den Bot für dein Team nutzen, aber hast keine Lust, ihn selbst zu hosten? Kein Problem\! Ich kann den Ticker für dein Team auf meinem Raspberry Pi einrichten. Schreib mir einfach eine E-Mail an: **julianlangschwert@gmail.com**
 
-This bot is designed to run 24/7 on a server like a Raspberry Pi.
+## Setup-Anleitung
 
-### Prerequisites
+Der Bot ist dafür ausgelegt, 24/7 auf einem Server (z.B. einem Raspberry Pi) zu laufen.
 
-  * A server (Raspberry Pi 4 recommended) with Raspberry Pi OS or another Linux distro.
-  * [Node.js](https://nodejs.org/) (version 16 or newer).
-  * [Git](https://git-scm.com/) installed.
-  * [Chromium](https://www.chromium.org/): `whatsapp-web.js` requires a browser to run.
-  * A **dedicated WhatsApp account** (it's highly recommended to use a separate number).
-  * A **Google Gemini API Key** for the AI summaries.
+### Voraussetzungen
+
+  * Ein Server (Raspberry Pi 4 empfohlen) mit Raspberry Pi OS oder einem anderen Linux.
+  * [Node.js](https://nodejs.org/) (Version 16 oder neuer).
+  * [Git](https://git-scm.com/) muss installiert sein.
+  * [Chromium](https://www.chromium.org/): `whatsapp-web.js` braucht einen Browser.
+  * Ein **eigener WhatsApp-Account** (es wird dringend empfohlen, eine separate Nummer dafür zu nutzen).
+  * Ein **Google Gemini API Key** für die KI-Zusammenfassungen.
 
 ### 1\. Installation
 
-1.  **Clone the Repository**
+1.  **Repository klonen**
 
     ```bash
-    # Run from your home directory (or wherever you want to store the project)
-    git clone [URL_TO_YOUR_GIT_REPO] handball-net-bot
+    # Führe das in deinem Home-Verzeichnis aus
+    git clone [URL_ZU_DEINEM_GIT_REPO] handball-net-bot
     cd handball-net-bot
     ```
 
-2.  **Install Dependencies**
-    This installs all necessary Node.js packages.
+2.  **Abhängigkeiten installieren**
+    Das installiert alle nötigen Node.js-Pakete.
 
     ```bash
     npm install
     ```
 
-3.  **Install System Packages**
-    Install `pm2` (our process manager) and `chromium` (for WhatsApp Web).
+3.  **System-Pakete installieren**
+    Wir installieren `pm2` (einen Prozess-Manager) und `chromium` (für WhatsApp Web).
 
     ```bash
-    # Install PM2 globally
+    # PM2 global installieren
     sudo npm install pm2 -g
 
-    # Install Chromium browser
+    # Chromium-Browser installieren
     sudo apt update
     sudo apt install -y chromium
     ```
 
-### 2\. Configuration
+### 2\. Konfiguration
 
-You must create a `.env` file to store your API key.
+Du musst eine `.env` Datei erstellen, um deinen API-Key zu speichern.
 
-1.  **Create the `.env` file:**
+1.  **`.env` Datei erstellen:**
 
     ```bash
     nano .env
     ```
 
-2.  **Add your key:**
-    Paste the following line into the editor, replacing the placeholder with your key:
+2.  **Key eintragen:**
+    Kopier die folgende Zeile in den Editor und ersetze den Platzhalter mit deinem Key:
 
     ```
-    GEMINI_API_KEY="YOUR_API_KEY_HERE"
+    GEMINI_API_KEY="DEIN_API_KEY_HIER"
     ```
 
-3.  **Save and Exit:**
-    Press `Ctrl + O`, `Enter` to save, and `Ctrl + X` to exit.
+3.  **Speichern und Schließen:**
+    Drücke `Ctrl + O`, dann `Enter` (zum Speichern) und `Ctrl + X` (zum Beenden).
 
 -----
 
-## 🤖 How to Use the Bot
+## Bot-Bedienung
 
-All commands must be sent in a WhatsApp group where the bot has been added.
+Alle Befehle müssen in einer WhatsApp-Gruppe gesendet werden, in der der Bot Mitglied ist.
 
-**Note:** The commands are prefixed with `!hnet-` to run in parallel with the old `nuliga` bot.
+### Die richtige URL finden
 
-### Finding the Ticker URL
+Der Bot braucht je nach Befehl eine andere URL:
 
-1.  Navigate to the game page on `handball.net`.
-2.  Copy the URL directly from your browser's address bar.
-3.  The bot is smart and can handle most formats, such as:
-      * `https://www.handball.net/spiele/nuliga.hvberlin.8062487/ticker`
-      * `https://www.handball.net/spiele/handball4all.baden-wuerttemberg.8549261/info`
-      * `https://www.handball.net/spiele/sportradar.dhbdata.86767`
+  * **Für `!start` (Einzelspiel):**
 
-### Commands
+    1.  Geh auf `handball.net` zur **Spiel-Info-Seite** (da, wo auch der Ticker läuft).
+    2.  Kopier die URL aus dem Browser, z.B.:
+        `https://www.handball.net/spiele/nuliga.bhv.8088464/info`
 
-  * **`!hnet-start <URL> [recap]`**
-    Schedules the live ticker for a game. The bot will figure out the start time and activate itself automatically.
+  * **Für `!autoschedule` (Ganze Saison):**
 
-      * **Live Mode (Default):** Use `!hnet-start <URL>`
-      * **Recap Mode:** Use `!hnet-start <URL> recap` to get summaries every 5 minutes.
+    1.  Geh auf `handball.net` zur **Mannschafts-Seite**.
+    2.  Klick dort auf den Reiter **"Spielplan"**.
+    3.  Kopier die URL aus dem Browser, z.B.:
+        `https://www.handball.net/mannschaften/nuliga.bhv.1678372/spielplan`
 
-  * **`!hnet-stop`**
-    Stops the currently running or scheduled ticker for that group.
+### Befehle
 
-  * **`!hnet-reset`**
-    Immediately stops the ticker, cancels any scheduled tasks, and **deletes all game data** for the group. This is useful for debugging or before starting a new ticker in the same group.
+  * **`!start <URL_zum_Spiel> [recap]`**
+    Startet den Live-Ticker für ein *einzelnes* Spiel. Der Bot erkennt die Startzeit und legt automatisch los.
+
+      * **Live-Modus (Standard):** `!start <URL>`
+      * **Recap-Modus:** `!start <URL> recap` (Sendet alle 5 Min. eine Zusammenfassung).
+
+  * **`!autoschedule <URL_zum_Team-Spielplan> [recap]`**
+    Plant automatisch das nächste anstehende Spiel für ein Team. Nach Spielende sucht der Bot automatisch das nächste Spiel und plant es.
+
+      * **Beispiel:** `!autoschedule https://www.handball.net/mannschaften/nuliga.bhv.1678372/spielplan`
+
+  * **`!stop`**
+    Stoppt den aktuell laufenden oder geplanten Ticker für diese Gruppe.
+    **Wichtig:** Bei einem `!autoschedule` Ticker bricht `!stop` auch die Planung für alle zukünftigen Spiele ab.
+
+  * **`!reset`**
+    Stoppt sofort alle Ticker, bricht geplante Aufgaben ab und **löscht alle Spieldaten** (gesehene Events, etc.) für diese Gruppe. Nützlich, falls der Bot sich "verschluckt" hat.
 
 -----
 
-## 🚀 Running the Bot with PM2
+## Bot 24/7 mit PM2 betreiben
 
-Using PM2 will keep your bot running 24/7 and automatically restart it if it crashes.
+Mit PM2 läuft dein Bot dauerhaft und startet automatisch neu, falls er abstürzt.
 
-### 1\. First Time Start & Login
+### 1\. Erster Start & Login
 
-1.  **Start the bot with PM2:**
-    (Run this from inside your project folder)
+1.  **Bot mit PM2 starten:**
+    (Führe das im Projektordner aus)
 
     ```bash
     pm2 start app.js --name "hnet-ticker"
     ```
 
-2.  **View the Logs & Scan QR Code:**
+2.  **Logs ansehen & QR-Code scannen:**
 
     ```bash
     pm2 logs hnet-ticker
     ```
 
-    A **QR code** will appear in the terminal. Open WhatsApp on your phone, go to **Settings \> Linked Devices \> Link a Device**, and scan the code.
+    Ein **QR-Code** erscheint im Terminal. Öffne WhatsApp auf deinem Handy, geh zu **Einstellungen \> Gekoppelte Geräte \> Gerät koppeln** und scanne den Code.
 
-    Once you see "WhatsApp-Client ist bereit\!", the login is complete\! You can exit the logs by pressing `Ctrl + C`.
+    Sobald "WhatsApp-Client ist bereit\!" in den Logs steht, ist der Login fertig. Du kannst die Logs mit `Ctrl + C` verlassen.
 
-### 2\. Enable Auto-Start on Reboot
+### 2\. Autostart nach Neustart einrichten
 
-This makes sure your bot starts automatically if the Raspberry Pi restarts.
+Damit der Bot auch nach einem Neustart vom Raspberry Pi wieder anläuft.
 
-1.  **Generate the startup command:**
+1.  **Startup-Befehl generieren:**
     ```bash
     pm2 startup
     ```
-2.  **Run the command it gives you** (it usually starts with `sudo env ...`).
-3.  **Save the process list:**
+2.  **Den Befehl ausführen, den PM2 dir anzeigt** (fängt meist mit `sudo env ...` an).
+3.  **Prozessliste speichern:**
     ```bash
     pm2 save
     ```
 
-### Useful PM2 Commands
+### Nützliche PM2-Befehle
 
-  * `pm2 logs hnet-ticker`: View the live logs.
-  * `pm2 restart hnet-ticker`: Restart the bot (use this after pulling updates).
-  * `pm2 stop hnet-ticker`: Stop the bot.
-  * `pm2 list`: See the status of all your apps.
+  * `pm2 logs hnet-ticker`: Die Live-Logs ansehen.
+  * `pm2 restart hnet-ticker`: Den Bot neustarten (z.B. nachdem du Updates geholt hast).
+  * `pm2 stop hnet-ticker`: Den Bot stoppen.
+  * `pm2 list`: Den Status all deiner Apps sehen.
