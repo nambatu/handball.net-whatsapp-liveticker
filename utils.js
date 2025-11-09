@@ -127,6 +127,10 @@ function formatEvent(ev, tickerState, gameData) {
     }
 
     switch (ev.type) { 
+
+        case "StartGame":
+            return "";
+
         case "Goal":
         case "SevenMeterGoal": {
             let scoreLine;
@@ -206,6 +210,9 @@ function formatRecapEventLine(ev, tickerState) {
     }
 
     switch (ev.type) {
+        case "StartGame":
+            return "";
+            
         case "Goal":
         case "SevenMeterGoal":
             const [home, away] = scoreStr.split(':');

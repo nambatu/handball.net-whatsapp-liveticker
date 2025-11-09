@@ -2,6 +2,7 @@
 
 const EVENT_MAP = {
     // New event types from handball.net JSON
+    "StartGame": { label: "Spiel gestartet", emoji: "📢" },
     "StartPeriod": { label: "Spielbeginn", emoji: "▶️" },
     "StopPeriod": { label: "Periodenende", emoji: "⏸️" }, // This is used for both halftime and game end
     "Goal": { label: "Tor", emoji: "🤾‍♀️" },

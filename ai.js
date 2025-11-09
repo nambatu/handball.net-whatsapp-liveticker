@@ -258,7 +258,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
         
-        return `🤖 *KI-Analyse zum Spiel:*\n\n${responsePro.responsePro.text()}`;
+        return `🤖 *KI-Analyse zum Spiel:*\n\n${responsePro.text()}`;
 
     } catch (error) {
         console.warn(`Fehler bei 'gemini-2.5-pro': ${error.status} ${error.message}`);
@@ -272,7 +272,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
                     contents: [{ role: "user", parts: [{ text: prompt }] }],
                 });
                 
-                return `🤖 *KI-Analyse zum Spiel (Flash-Modell):*\n\n${responseFlash.response.text()}`;
+                return `🤖 *KI-Analyse zum Spiel (Flash-Modell):*\n\n${responseFlash.text()}`;
                 
             } catch (flashError) {
                 // 3. If "flash" also fails, send the user-facing error
