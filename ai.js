@@ -252,27 +252,27 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
     // --- NEW FALLBACK LOGIC ---
     try {
         // 1. Try the "pro" model first
-        console.log("Versuche AI-Zusammenfassung mit 'gemini-2.5-pro'...");
+        console.log("Versuche AI-Zusammenfassung mit 'gemini-3-flash'...");
         const responsePro = await genAI.models.generateContent({
-            model: "gemini-3-pro-preview",
+            model: "gemini-3-flash",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
         
         return `🤖 *KI-Analyse zum Spiel:*\n\n${responsePro.text}`;
 
     } catch (error) {
-        console.warn(`Fehler bei 'gemini-2.5-pro': ${error.status} ${error.message}`);
+        console.warn(`Fehler bei 'gemini-3-flah': ${error.status} ${error.message}`);
         
         // 2. If it's an overload error, try the "flash" model
         if (error.status === 503 || (error.message && error.message.includes("overloaded"))) {
             console.log("Pro-Modell überlastet. Versuche Fallback mit 'gemini-2.5-flash'...");
             try {
                 const responseFlash = await genAI.models.generateContent({
-                    model: "gemini-3-flash-preview",
+                    model: "gemini-2.5-flash",
                     contents: [{ role: "user", parts: [{ text: prompt }] }],
                 });
                 
-                return `🤖 *KI-Analyse zum Spiel (Flash-Modell):*\n\n${responseFlash.text}`;
+                return `🤖 *KI-Analyse zum Spiel:*\n\n${responseFlash.text}`;
                 
             } catch (flashError) {
                 // 3. If "flash" also fails, send the user-facing error
