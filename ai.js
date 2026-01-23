@@ -254,7 +254,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
         // 1. Try the "pro" model first
         console.log("Versuche AI-Zusammenfassung mit 'gemini-2.5-pro'...");
         const responsePro = await genAI.models.generateContent({
-            model: "gemini-2.5-pro",
+            model: "gemini-3-pro-preview",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
         
@@ -268,7 +268,7 @@ async function generateGameSummary(events, teamNames, groupName, lineupData) {
             console.log("Pro-Modell überlastet. Versuche Fallback mit 'gemini-2.5-flash'...");
             try {
                 const responseFlash = await genAI.models.generateContent({
-                    model: "gemini-2.5-flash",
+                    model: "gemini-3-flash-preview",
                     contents: [{ role: "user", parts: [{ text: prompt }] }],
                 });
                 
