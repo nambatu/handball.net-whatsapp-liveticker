@@ -244,9 +244,16 @@ process.on('SIGINT', async () => {
         ticker.isPolling = false;
         ticker.isScheduled = false;
         if (ticker.scheduleTimeout) clearTimeout(ticker.scheduleTimeout);
-        if (ticker.recapIntervalId) clearInterval(tickerState.recapIntervalId);
-     });
+        if (ticker.recapIntervalId) clearInterval(ticker.recapIntervalId); // FIX: ticker statt tickerState
+    });
     saveSeenTickers(activeTickers, SEEN_FILE); 
-    if (client) await client.destroy(); 
+    
+    // FIX: Try-Catch hinzugefügt, damit ein kaputter Client nicht den Exit blockiert
+    try {
+        if (client) await client.destroy(); 
+    } catch (error) {
+        console.log('Fehler beim Schließen des Clients ignoriert.');
+    }
+    
     process.exit(0); 
 });
